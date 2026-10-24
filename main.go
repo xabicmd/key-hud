@@ -27,8 +27,7 @@ var webAssets embed.FS
 
 func main() {
 	monitorSpec := flag.String("monitor", "1920x480", `target screen: "WxH", a 1-based index, or "primary"`)
-	dur := flag.Float64("dur", 7.0, "seconds a label takes to cross the screen")
-	lanes := flag.Int("lanes", 0, "number of horizontal lanes (0 = fit to height)")
+	configFile := flag.String("config", "", "path to key-hud.json (default: next to the executable)")
 	topmost := flag.Bool("topmost", true, "keep the strip above other windows")
 	noActivate := flag.Bool("no-activate", false, "never take keyboard focus")
 	debug := flag.Bool("debug", false, "enable devtools and the context menu")
@@ -36,6 +35,17 @@ func main() {
 	flag.Parse()
 
 	ignoreInjected = *ignoreSynthetic
+
+	if !acquireSingleInstance() {
+		log.Print("key-hud is already running; this second copy is exiting")
+		return
+	}
+
+	cfgPath := *configFile
+	if cfgPath == "" {
+		cfgPath = configPath()
+	}
+	cfg := loadConfig(cfgPath)
 
 	target, err := pickMonitor(*monitorSpec)
 	if err != nil {
@@ -59,6 +69,8 @@ func main() {
 	defer w.Destroy()
 
 	styleAsOverlay(uintptr(w.Window()), target, *topmost, *noActivate)
+
+	grouperRef = newGrouper(time.Duration(cfg.GroupWindowMs)*time.Millisecond, cfg.Lanes)
 
 	quit := make(chan struct{})
 	var startOnce sync.Once
@@ -98,22 +110,18 @@ func main() {
 		w.Dispatch(func() { w.Terminate() })
 	}()
 
-	addr, err := serveAssets()
+	addr, err := serveAssets(cfg)
 	if err != nil {
 		log.Fatalf("http: %v", err)
 	}
 
-	url := fmt.Sprintf("http://%s/index.html?dur=%g", addr, *dur)
-	if *lanes > 0 {
-		url += fmt.Sprintf("&lanes=%d", *lanes)
-	}
-
-	w.Navigate(url)
+	w.Navigate(fmt.Sprintf("http://%s/index.html", addr))
 	w.Run()
 }
 
-// push marshals one event and hands it to the page. Dispatch is mandatory:
-// Eval and Navigate are WebView2 COM calls and must run on the UI thread.
+// push marshals one instruction and hands it to the page. Dispatch is
+// mandatory: Eval and Navigate are WebView2 COM calls and must run on the UI
+// thread.
 func push(w webview2.WebView, ev Event) {
 	payload, err := json.Marshal(ev)
 	if err != nil {
@@ -123,24 +131,49 @@ func push(w webview2.WebView, ev Event) {
 	w.Dispatch(func() { w.Eval(script) })
 }
 
-// serveAssets exposes the embedded UI on a loopback port. A real origin keeps
-// web fonts and modules behaving exactly as they do in a normal browser.
-func serveAssets() (string, error) {
+// serveAssets exposes the embedded UI plus the live config on a loopback port.
+// A real origin keeps web fonts and modules behaving exactly as they do in a
+// normal browser.
+func serveAssets(cfg Config) (string, error) {
 	sub, err := fs.Sub(webAssets, "web")
 	if err != nil {
 		return "", err
 	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/config", func(rw http.ResponseWriter, r *http.Request) {
+		rw.Header().Set("Content-Type", "application/json")
+		rw.Header().Set("Cache-Control", "no-store")
+		if err := json.NewEncoder(rw).Encode(cfg); err != nil {
+			log.Printf("config endpoint: %v", err)
+		}
+	})
+	mux.Handle("/", noCache(http.FileServer(http.FS(sub))))
+
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return "", err
 	}
-	srv := &http.Server{Handler: http.FileServer(http.FS(sub))}
+	srv := &http.Server{Handler: mux}
 	go func() {
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			log.Printf("http server: %v", err)
 		}
 	}()
 	return ln.Addr().String(), nil
+}
+
+// noCache keeps WebView2 from serving a stale style.css or app.js after a
+// rebuild. The port is random but frequently reused, so the origin can match a
+// previous run and Chromium happily reuses its cached copies. That is exactly
+// how an old animation once kept winning over the new one.
+func noCache(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
+		h.ServeHTTP(w, r)
+	})
 }
 
 func webviewDataPath() string {

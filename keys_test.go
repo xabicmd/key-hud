@@ -1,11 +1,76 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func resetComboState() {
 	pressed = map[uint32]bool{}
 	heldMods = map[uint32]bool{}
-	heldOrder = nil
+	rightAlt = false
+}
+
+// fakeLayout answers like a plain US layout with dead quotes, so the key tests
+// do not depend on which keyboard layout the machine has installed. The real
+// translation is covered by TestLayoutKeyTextComposesDeadKeys.
+func fakeLayout(vk, scan uint32) keyText {
+	if heldMods[vkControl] && heldMods[vkAlt] {
+		if vk == 0x45 { // AltGr+E
+			return keyText{text: "é"}
+		}
+		return keyText{}
+	}
+	if vk == vkSpace {
+		return keyText{text: " "}
+	}
+	if vk >= 0x41 && vk <= 0x5A {
+		r := rune(vk + 0x20) // "a"
+		if heldMods[vkShift] {
+			r = rune(vk) // "A"
+		}
+		return keyText{text: string(r)}
+	}
+	if vk >= 0x30 && vk <= 0x39 {
+		if heldMods[vkShift] {
+			return keyText{text: string(")!@#$%^&*("[vk-0x30])}
+		}
+		return keyText{text: string(rune(vk))}
+	}
+	switch vk {
+	case 0xBA: // ;
+		return keyText{text: ";"}
+	case 0xBB: // =
+		if heldMods[vkShift] {
+			return keyText{text: "+"}
+		}
+		return keyText{text: "="}
+	case 0xDE: // ' starts a dead accent
+		return keyText{dead: true}
+	}
+	return keyText{}
+}
+
+// newTestHooks gives every key test a fresh grouper, so lane numbers and
+// grouping state start from zero.
+func newTestHooks(t *testing.T) {
+	t.Helper()
+	resetComboState()
+	readKeyText = fakeLayout
+	t.Cleanup(func() {
+		readKeyText = layoutKeyText
+		resetComboState()
+	})
+	grouperRef = newGrouper(500*time.Millisecond, 3)
+	hookEvents = nil // emit drops into the default branch, no reader needed
+}
+
+func press(t *testing.T, vks ...uint32) {
+	t.Helper()
+	for _, vk := range vks {
+		handleKey(vk, 0, true)
+		handleKey(vk, 0, false)
+	}
 }
 
 func TestKeyLabel(t *testing.T) {
@@ -78,16 +143,6 @@ func TestBuildComboLabelOrder(t *testing.T) {
 	}
 }
 
-func TestBuildComboLabelIncludesOtherHeldKeys(t *testing.T) {
-	resetComboState()
-	heldMods[canonMod(vkLControl)] = true
-	heldOrder = []uint32{0x41} // "a" still held down
-
-	if got, want := buildComboLabel("b"), "ctrl+a+b"; got != want {
-		t.Fatalf("got %q, want %q", got, want)
-	}
-}
-
 func TestBuildComboLabelMouse(t *testing.T) {
 	resetComboState()
 	if got, want := buildComboLabel("click"), "click"; got != want {
@@ -100,19 +155,152 @@ func TestBuildComboLabelMouse(t *testing.T) {
 	}
 }
 
-func TestRemoveHeld(t *testing.T) {
-	resetComboState()
-	heldOrder = []uint32{0x41, 0x42, 0x43}
+// Fast typing overlaps keystrokes: the next key goes down before the previous
+// one comes up. A held letter must never be mistaken for a modifier, otherwise
+// "hola" turns into "ho" + "l+a".
+func TestHeldLetterIsNotACombination(t *testing.T) {
+	newTestHooks(t)
 
-	removeHeld(0x42)
-	if len(heldOrder) != 2 || heldOrder[0] != 0x41 || heldOrder[1] != 0x43 {
-		t.Fatalf("after removing 0x42: %v", heldOrder)
+	if ev, ok := handleKey(0x41, 0, true); !ok || ev.Kind != "new" || ev.Text != "a" {
+		t.Fatalf("first key = %+v, %v", ev, ok)
 	}
 
-	// Removing something absent must not panic or corrupt the slice.
-	removeHeld(0x5A)
-	if len(heldOrder) != 2 {
-		t.Fatalf("absent removal changed slice: %v", heldOrder)
+	// "b" arrives while "a" is still down.
+	ev, ok := handleKey(0x42, 0, true)
+	if !ok {
+		t.Fatal("second key produced no event")
+	}
+	if ev.Kind != "append" || ev.Text != "b" {
+		t.Fatalf("while a is held: %+v, want append b", ev)
+	}
+}
+
+// The user asked for the character that really appears: shift+2 types "@", so
+// the strip shows "@" and not "shift+2".
+func TestShiftCharacterShowsTheTypedCharacter(t *testing.T) {
+	newTestHooks(t)
+
+	if _, ok := handleKey(vkLShift, 0, true); ok {
+		t.Fatal("a modifier alone must not publish a label")
+	}
+
+	ev, ok := handleKey(0x32, 0, true) // shift+2 => @
+	if !ok {
+		t.Fatal("shift+2 produced no event")
+	}
+	if ev.Kind != "new" || ev.Text != "@" || ev.Group != groupSymbols || ev.Lane != 0 {
+		t.Fatalf("shift+2 = %+v, want a @ label", ev)
+	}
+
+	// It is text, so it joins the word like any other character.
+	next, ok := handleKey(0x23, 0, true)
+	if !ok || next.Kind != "append" || next.Text != "3" {
+		t.Fatalf("key after @ = %+v, %v", next, ok)
+	}
+}
+
+func TestShiftedLetterStaysAWord(t *testing.T) {
+	newTestHooks(t)
+
+	if _, ok := handleKey(vkLShift, 0, true); ok {
+		t.Fatal("a modifier alone must not publish a label")
+	}
+
+	// Shift+H must read as H, not SHIFT+H: an uppercase word is still a word.
+	ev, ok := handleKey(0x48, 0, true)
+	if !ok {
+		t.Fatal("shift+h produced no event")
+	}
+	if ev.Kind != "new" || ev.Text != "H" || ev.Group != groupLetters {
+		t.Fatalf("shift+h = %+v", ev)
+	}
+
+	next, ok := handleKey(0x4F, 0, true)
+	if !ok || next.Kind != "append" || next.Text != "O" {
+		t.Fatalf("shift+o = %+v, %v, want append O", next, ok)
+	}
+}
+
+func TestShiftWithAnotherModifierIsStillACombination(t *testing.T) {
+	newTestHooks(t)
+
+	handleKey(vkLControl, true)
+	handleKey(vkLShift, true)
+	ev, ok := handleKey(0x41, true) // ctrl+shift+a
+	if !ok {
+		t.Fatal("ctrl+shift+a produced no event")
+	}
+	if ev.Kind != "new" || ev.Text != "ctrl+shift+a" || ev.Group != groupCombo {
+		t.Fatalf("ctrl+shift+a = %+v", ev)
+	}
+}
+
+func TestSpaceEndsTheWordWithoutTakingALane(t *testing.T) {
+	newTestHooks(t)
+
+	press(t, 0x48, 0x4F, 0x4C, 0x41) // hola on lane 0
+
+	ev, ok := handleKey(0x20, true) // space
+	if !ok {
+		t.Fatal("space produced no event")
+	}
+	// The blank belongs to HOLA; it is not a label and it does not consume the
+	// next lane, so the words keep 1 -> 2 -> 3 rotation.
+	if ev.Kind != "space" || ev.Text != spaceRune {
+		t.Fatalf("space = %q (%+v), want a blank on the current label", ev.Text, ev)
+	}
+
+	// The next word takes the lane right after HOLA, not one after a space.
+	for i, vk := range []uint32{0x58, 0x41, 0x42, 0x49} { // xabi
+		got, ok := handleKey(vk, true)
+		if !ok {
+			t.Fatalf("letter %d produced no event", i)
+		}
+		if i == 0 {
+			if got.Kind != "new" || got.Text != "x" || got.Lane != 1 {
+				t.Fatalf("first letter of the new word = %+v, want new x on lane 1", got)
+			}
+		} else if got.Kind != "append" {
+			t.Fatalf("letter %d = %+v, want append", i, got)
+		}
+		handleKey(vk, false)
+	}
+}
+
+func TestControlSpaceKeepsItsName(t *testing.T) {
+	newTestHooks(t)
+
+	handleKey(vkLControl, true)
+	ev, ok := handleKey(0x20, true)
+	if !ok {
+		t.Fatal("ctrl+space produced no event")
+	}
+	if ev.Kind != "new" || ev.Text != "ctrl+space" || ev.Group != groupCombo {
+		t.Fatalf("ctrl+space = %+v", ev)
+	}
+}
+
+func TestBackspaceIsItsOwnLabel(t *testing.T) {
+	newTestHooks(t)
+
+	press(t, 0x41, 0x42) // ab
+	ev, ok := handleKey(0x08, true)
+	if !ok {
+		t.Fatal("backspace produced no event")
+	}
+	if ev.Kind != "new" || ev.Text != "backspace" || ev.Group != groupSymbols || ev.Lane != 1 {
+		t.Fatalf("backspace = %+v", ev)
+	}
+}
+
+func TestAutoRepeatPublishesOnce(t *testing.T) {
+	newTestHooks(t)
+
+	if _, ok := handleKey(0x41, true); !ok {
+		t.Fatal("first press produced no event")
+	}
+	if _, ok := handleKey(0x41, true); ok {
+		t.Fatal("auto-repeat must not publish a second label")
 	}
 }
 

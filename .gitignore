@@ -23,3 +23,14 @@ go.work.sum
 
 # env file
 .env
+
+# Generated at runtime next to the executable
+key-hud.json
+
+# Engram: commit the project identity, ignore local sync state
+.engram/*
+!.engram/config.json
+
+# Local verification scratch
+e*.txt
+shot*.png

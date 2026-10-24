@@ -19,7 +19,13 @@ const (
 	vkLWin     = 0x5B
 	vkRWin     = 0x5C
 	vkWin      = 0x5B
+	vkSpace    = 0x20
 )
+
+// spaceRune is what a bare space leaves behind: the blank character itself, so
+// the word it closes gets a trailing gap instead of the word "space". The name
+// "space" is still used inside combinations such as "ctrl+space".
+const spaceRune = " "
 
 // modOrder is the order modifiers are rendered in a combination.
 var modOrder = []struct {

@@ -40,6 +40,31 @@ go build -ldflags "-H windowsgui -s -w" -o key-hud.exe .
 `-H windowsgui` suppresses the console window. Omit it during development to
 see logs on stderr.
 
+## Project layout
+
+One package, one binary. Go does not use a `src/` tree: every `.go` file in the
+repository root belongs to `package main`, and the build compiles them together.
+The files are split by responsibility, not by layer:
+
+| File | Responsibility |
+| --- | --- |
+| `main.go` | flags and wiring: config, monitor, window, hook startup |
+| `ui.go` | embedded assets, the loopback HTTP origin and the push into the page |
+| `config.go` | `key-hud.json`: defaults, merge and write-on-first-run |
+| `hook.go` | global Win32 hooks and raw message dispatch |
+| `input.go` | one decoded key or mouse event to one label instruction |
+| `keys.go` | key names and the modifier vocabulary |
+| `typing.go` | what the active layout types for a press, dead keys included |
+| `group.go` | word grouping, lane rotation and colour groups |
+| `win32.go` | DLL functions, constants and C struct layouts |
+| `monitor.go` | monitor enumeration and `-monitor` parsing |
+| `window.go` | overlay window styling and the single-instance mutex |
+
+Each `foo.go` has a `foo_test.go` next to it. Go tests must live in the package
+they test: they call unexported functions, and the toolchain only compiles
+`_test.go` files together with the package in the same directory. The `tests/`
+directory is not Go tests; it holds the Node tests for `web/motion.js`.
+
 ## How keys become labels
 
 Lane rotation is 1 → 2 → 3 → 1. A keystroke starts a **new** label when the gap
@@ -52,14 +77,24 @@ combination prefix. A letter that is still held down because the next key was
 pressed a few milliseconds later is just fast typing — that is why "hola" reads
 as one word instead of `HO` + `L+A`.
 
-Shift is special-cased by what the key produces. Shift on a letter is just an
-uppercase letter, so holding shift to type `HOLA` still gives one word. Shift on
-a digit or a punctuation key is how you type `@ # % :`, and those are shown as
-the key combination on their own label.
+Shift and AltGr are read as what they type, not as key combinations. The app asks
+the active keyboard layout what the press produces, so `shift+2` shows `@`,
+`shift+\` shows `|`, and a dead accent followed by a letter shows the accented
+letter (`´` then `a` gives `Á`). A dead key on its own has not typed anything
+yet, so it shows nothing; the character appears with the key that composes it.
+
+Only a press that types no character at all is a combination: `CTRL+C`,
+`CTRL+ALT+DELETE`, `ALT+TAB`, `SHIFT+F5`. Left alt with ctrl is a command, not
+AltGr, so it stays a combination; right alt is AltGr and it types.
 
 Action keys never join a word and always get their own label: `BACKSPACE`, `TAB`,
 `ENTER`, `ESC`, `DELETE`, `INSERT`, the arrows, `HOME`/`END`, `PAGE UP`/`PAGE
 DOWN`, the numpad and the function keys.
+
+Repeating one of those is a single gesture. Holding backspace, or pressing it
+five times to delete five characters, shows one `BACKSPACE`; the same goes for
+tab, the arrow keys, `PAGE UP`/`PAGE DOWN` and `HOME`/`END`. A different key, a
+typed character or a combination ends the run.
 
 A **bare space** is the one exception. It ends the word and leaves its blank
 behind it — the blank becomes part of the word's own label — but it does **not**
@@ -74,8 +109,13 @@ such as `CTRL+SPACE` is a normal combination and keeps its own lane.
 | `hola`, then a > 500 ms pause, then `m` | `HOLA` on lane 1, `M` on lane 2 |
 | `te` space `comparto` space `un` space `ejemplo` | `TE` on lane 1, `COMPARTO` on lane 2, `UN` on lane 3, `EJEMPLO` on lane 1 |
 | `ctrl` + `c` | `CTRL+C` on the next lane, always its own label |
-| `shift` + `2` (types `@`) | `SHIFT+2` on the next lane: the keys, not the symbol |
+| `shift` + `2` (types `@`) | `@`: the character, not the keys |
+| `shift` + `\` (types `\|`) | `\|` |
+| `´` then `a` | `Á`: the dead accent and the letter are one character |
+| right alt + `e` (types `é`) | `É` |
 | `ctrl` + `alt` + `delete` | `CTRL+ALT+DELETE` on the next lane |
+| `alt` + `tab` | `ALT+TAB` on the next lane |
+| `backspace` five times in a row | one `BACKSPACE` |
 | any mouse button | `CLICK` / `RIGHT CLICK` / `WHEEL UP` … on the next lane |
 
 A label is capped at 16 characters so an endless stream of fast typing cannot
@@ -135,8 +175,8 @@ The four colour groups:
 | Group | Covers |
 | --- | --- |
 | `letters` | A single letter: `A`, `Z`, `Ñ`. |
-| `symbols` | Anything that is not a letter and not a combination: `1`, `;`, `ESC`, `SPACE`, `F24`. |
-| `combo` | Anything containing `+`: `CTRL+C`, `CTRL+SHIFT+P`. |
+| `symbols` | Anything that is not a letter and not a combination: `1`, `@`, `;`, `ESC`, `F24`. |
+| `combo` | Keys pressed together that type no character: `CTRL+C`, `CTRL+ALT+DELETE`. A typed `+` is text, not a combination. |
 | `mouse` | Every mouse button and wheel event, including `CTRL+CLICK`. |
 
 Each group has three colours: `text` is the glyph, `glow` is the tight halo,
@@ -170,13 +210,22 @@ which is embedded into the binary at build time:
 
 - `web/style.css` — layout, the CRT scanline and vignette layers. Both are purely
   cosmetic: delete those two divs and nothing breaks.
-- `web/app.js` — lane layout and the animation.
+- `web/app.js` — entry point: fetches `/api/config` and exposes `window.__hud`.
+- `web/stage.js` — the label elements, the per-lane anchors and the release queue.
+- `web/motion.js` — pure sweep geometry. The Node tests import this file directly.
+- `web/config.js` — fallback config, the merge with `key-hud.json`, colour styles.
+
+The page uses native ES modules: `index.html` loads `app.js` with
+`type="module"` and the other files import each other over the loopback origin.
+There is no bundler and no build step. `web/package.json` only tells Node that
+`web/` is an ES module tree; the browser ignores it.
 
 Motion only touches `transform` and `opacity`, so it runs on the compositor and
 you can layer on `filter`, `mix-blend-mode` or SVG effects without slowing the
 capture path down.
 
-The label vocabulary lives in `keys.go`.
+The label vocabulary lives in `keys.go`; the translation of a key press into the
+character the active layout types lives in `typing.go`.
 
 ## Known limits
 
@@ -184,6 +233,13 @@ The label vocabulary lives in `keys.go`.
   non-elevated hook, thanks to UIPI. Run the app elevated if you need them.
 - `Ctrl+Alt+Del` and the secure desktop cannot be captured by any user-mode
   hook.
+- The character is translated with the layout of the window in front, and the
+  translation is read-only (`flagNoStateChange`). ToUnicodeEx without that flag
+  writes to the kernel-mode keyboard buffer, which every application shares: the
+  accent the user is typing gets eaten and no app types `á` or `ñ` until this one
+  closes. Because the pending accent lives in that shared buffer, an accent
+  pressed in one app and a letter typed in another can still be shown as one
+  character.
 - No autostart is installed. Add a shortcut to `shell:startup` yourself if you
   want it on boot.
 
@@ -225,9 +281,14 @@ node --test tests/
 ```
 
 The Go tests cover key naming, modifier normalization, combination ordering, the
-grouping window, lane rotation, colour grouping and config merging. The Node
-tests load `web/app.js` directly and pin the motion geometry: constant speed for
-short and queued labels, the original fade-in/fade-out positions, the wait that
-keeps two labels on one lane from overlapping, and the rule that a label enters
-at the screen edge exactly when its lane is clear. The Win32 hooks and the
-WebView2 window are verified manually.
+character the active layout types (a pending accent still composes, and
+translating never changes the shared keyboard state), the
+collapse of a repeated action key, the grouping window, lane rotation, colour
+grouping and config merging. The Node
+tests import `web/motion.js` directly and pin the motion geometry: constant speed
+for short and queued labels, the original fade-in/fade-out positions, the wait
+that keeps two labels on one lane from overlapping, and the rule that a label
+enters at the screen edge exactly when its lane is clear. One more test boots
+`web/app.js` in Node with a stubbed document, so a broken module graph or a
+broken `window.__hud` wiring fails there instead of only in the window. The Win32
+hooks and the WebView2 window are verified manually.

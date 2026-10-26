@@ -62,6 +62,8 @@ func canonMod(vk uint32) uint32 {
 	return vk
 }
 
+// specialKeys names the keys that are not typed text. Arrow keys keep their
+// glyph: "→" reads at a glance, where "right" has to be read word by word.
 var specialKeys = map[uint32]string{
 	0x08: "backspace",
 	0x09: "tab",
@@ -74,10 +76,10 @@ var specialKeys = map[uint32]string{
 	0x22: "page down",
 	0x23: "end",
 	0x24: "home",
-	0x25: "left",
-	0x26: "up",
-	0x27: "right",
-	0x28: "down",
+	0x25: "←",
+	0x26: "↑",
+	0x27: "→",
+	0x28: "↓",
 	0x2C: "print screen",
 	0x2D: "insert",
 	0x2E: "delete",

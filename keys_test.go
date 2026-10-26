@@ -19,7 +19,10 @@ func TestKeyLabel(t *testing.T) {
 		{0x1B, "esc"},      // Escape
 		{0x20, "space"},    // Space
 		{0x0D, "enter"},    // Return
-		{0x25, "left"},     // Left arrow
+		{0x25, "←"},       // Left arrow
+		{0x26, "↑"},       // Up arrow
+		{0x27, "→"},       // Right arrow
+		{0x28, "↓"},       // Down arrow
 		{0x60, "numpad 0"}, // Numpad 0
 		{0xBA, ";"},        // OEM semicolon
 		{0x0F, "vk0f"},     // unmapped code

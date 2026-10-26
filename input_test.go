@@ -12,6 +12,7 @@ func resetComboState() {
 	pressed = map[uint32]bool{}
 	heldMods = map[uint32]bool{}
 	rightAlt = false
+	lastWheel = time.Time{}
 	clearActionRun()
 }
 
@@ -294,8 +295,67 @@ func TestRepeatedActionKeyShowsOnce(t *testing.T) {
 	// A typed character ends the run: backspace after it shows again.
 	handleKey(0x41, 0, true)
 	handleKey(0x41, 0, false)
-	if ev, ok := handleKey(0x25, 0, true); !ok || ev.Text != "left" {
+	if ev, ok := handleKey(0x25, 0, true); !ok || ev.Text != "←" {
 		t.Fatalf("action key after typing = %+v, %v, want it to show again", ev, ok)
+	}
+}
+
+// A spin of the wheel fires one event per notch, dozens per second. It is one
+// gesture per direction, exactly like an action key held down.
+func TestRepeatedWheelDirectionShowsOnce(t *testing.T) {
+	newTestHooks(t)
+
+	first, ok := onButton("wheel up")
+	if !ok || first.Kind != "new" || first.Text != "wheel up" || first.Group != groupMouse {
+		t.Fatalf("first wheel up = %+v, %v", first, ok)
+	}
+	for i := 0; i < 4; i++ {
+		if ev, ok := onButton("wheel up"); ok {
+			t.Fatalf("wheel up notch %d = %+v, want nothing", i+2, ev)
+		}
+	}
+
+	// The other direction is a different gesture and shows on its own.
+	if ev, ok := onButton("wheel down"); !ok || ev.Text != "wheel down" {
+		t.Fatalf("wheel down after wheel up = %+v, %v", ev, ok)
+	}
+}
+
+// The wheel run is a run of one gesture: anything in between ends it.
+func TestWheelDirectionShowsAgainAfterAnotherInput(t *testing.T) {
+	newTestHooks(t)
+
+	onButton("wheel up")
+	if ev, ok := onButton("click"); !ok || ev.Text != "click" {
+		t.Fatalf("click after wheel up = %+v, %v", ev, ok)
+	}
+	if ev, ok := onButton("wheel up"); !ok || ev.Text != "wheel up" {
+		t.Fatalf("wheel up after a click = %+v, %v, want it to show again", ev, ok)
+	}
+
+	onButton("wheel up")
+	press(t, 0x41) // typing
+	if ev, ok := onButton("wheel up"); !ok || ev.Text != "wheel up" {
+		t.Fatalf("wheel up after typing = %+v, %v, want it to show again", ev, ok)
+	}
+
+	onButton("wheel up")
+	press(t, 0x08) // backspace
+	if ev, ok := onButton("wheel up"); !ok || ev.Text != "wheel up" {
+		t.Fatalf("wheel up after an action key = %+v, %v, want it to show again", ev, ok)
+	}
+}
+
+// The sideways wheel keeps its own rate limit: a tilt is deliberate, but a
+// fling still must not flood the strip.
+func TestSidewaysWheelKeepsRateLimit(t *testing.T) {
+	newTestHooks(t)
+
+	if ev, ok := onButton("wheel right"); !ok || ev.Text != "wheel right" {
+		t.Fatalf("first wheel right = %+v, %v", ev, ok)
+	}
+	if ev, ok := onButton("wheel right"); ok {
+		t.Fatalf("second wheel right = %+v, want nothing inside the rate limit", ev)
 	}
 }
 

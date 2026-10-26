@@ -88,8 +88,8 @@ Only a press that types no character at all is a combination: `CTRL+C`,
 AltGr, so it stays a combination; right alt is AltGr and it types.
 
 Action keys never join a word and always get their own label: `BACKSPACE`, `TAB`,
-`ENTER`, `ESC`, `DELETE`, `INSERT`, the arrows, `HOME`/`END`, `PAGE UP`/`PAGE
-DOWN`, the numpad and the function keys.
+`ENTER`, `ESC`, `DELETE`, `INSERT`, the arrows (`←` `↑` `→` `↓`), `HOME`/`END`,
+`PAGE UP`/`PAGE DOWN`, the numpad and the function keys.
 
 Repeating one of those is a single gesture. Holding backspace, or pressing it
 five times to delete five characters, shows one `BACKSPACE`; the same goes for
@@ -116,6 +116,8 @@ such as `CTRL+SPACE` is a normal combination and keeps its own lane.
 | `ctrl` + `alt` + `delete` | `CTRL+ALT+DELETE` on the next lane |
 | `alt` + `tab` | `ALT+TAB` on the next lane |
 | `backspace` five times in a row | one `BACKSPACE` |
+| the wheel up five notches in a row | one `WHEEL UP` |
+| `left` `up` `right` `down` arrows | `←` `↑` `→` `↓` |
 | any mouse button | `CLICK` / `RIGHT CLICK` / `WHEEL UP` … on the next lane |
 
 A label is capped at 16 characters so an endless stream of fast typing cannot

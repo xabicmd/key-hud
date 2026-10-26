@@ -22,6 +22,12 @@ var (
 	lastAction   uint32
 	lastActionAt time.Time
 	lastWheel    time.Time
+
+	// The wheel has no virtual-key code, so its repeat run is keyed by the
+	// direction that was shown last: spinning the wheel up ten notches is one
+	// gesture and shows one label, exactly like holding an action key.
+	lastWheelRun   string
+	lastWheelRunAt time.Time
 )
 
 func onKey(lParam uintptr, down bool) {
@@ -103,6 +109,9 @@ func handleKey(vk, scan uint32, down bool) (Event, bool) {
 	if repeatsAction(vk) {
 		return Event{}, false
 	}
+	// An action key ends the wheel run: a scroll after backspace is not the
+	// same gesture as the scroll before it.
+	lastWheelRun, lastWheelRunAt = "", time.Time{}
 	return emit(kindAction, keyLabel(vk)), true
 }
 
@@ -118,23 +127,40 @@ func repeatsAction(vk uint32) bool {
 }
 
 // clearActionRun ends the run, so the same action key after a typed character
-// or a combination shows again.
+// or a combination shows again. It also ends the wheel run: a scroll is only
+// one gesture while nothing else happens in between.
 func clearActionRun() {
 	lastAction, lastActionAt = 0, time.Time{}
+	lastWheelRun, lastWheelRunAt = "", time.Time{}
 }
 
-func onButton(name string) {
-	// A fast scroll wheel can fire dozens of events per second and would push
-	// everything else off the strip.
+// onButton publishes one mouse button or wheel movement. The vertical wheel
+// repeats like an action key: scrolling up several notches is one gesture and
+// shows one label, because a fast wheel would otherwise push everything else
+// off the strip. The sideways wheel and the buttons keep their own handling.
+func onButton(name string) (Event, bool) {
+	now := time.Now()
+	if name == "wheel up" || name == "wheel down" {
+		same := name == lastWheelRun && now.Sub(lastWheelRunAt) <= grouperRef.window
+		lastWheelRun, lastWheelRunAt = name, now
+		if same {
+			return Event{}, false
+		}
+		// The scroll ends a run of action keys: backspace after it shows
+		// again.
+		lastAction, lastActionAt = 0, time.Time{}
+		return emit(groupMouse, buildComboLabel(name)), true
+	}
+	// A fast sideways wheel can fire dozens of events per second and would
+	// push everything else off the strip.
 	if strings.HasPrefix(name, "wheel") {
-		now := time.Now()
 		if now.Sub(lastWheel) < 70*time.Millisecond {
-			return
+			return Event{}, false
 		}
 		lastWheel = now
 	}
-	emit(groupMouse, buildComboLabel(name))
 	clearActionRun()
+	return emit(groupMouse, buildComboLabel(name)), true
 }
 
 func buildCombo(vk uint32) string {

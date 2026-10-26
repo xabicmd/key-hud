@@ -1,15 +1,18 @@
 import { FALLBACK, mergeConfig } from "./config.js";
 import { createStage } from "./stage.js";
+import { createSplash } from "./splash.js";
 
 // Entry point: load the config, measure the stages, and expose the single
 // function Go calls for every captured input.
 
 const stage = createStage(document.getElementById("stage"));
+const splash = createSplash(document.getElementById("splash"));
 
 let cfg = FALLBACK;
 // Configure before the round-trip, not after: an instruction that arrives
 // early must still find colours instead of throwing.
 stage.configure(cfg);
+splash.configure(cfg);
 
 // The page announces itself only after the config arrived and the lanes are
 // measured, so Go can install the hooks without losing a keystroke.
@@ -37,6 +40,7 @@ fetch("api/config", { cache: "no-store" })
   })
   .finally(() => {
     stage.configure(cfg);
+    splash.configure(cfg);
     stage.layout();
     announceReady();
   });

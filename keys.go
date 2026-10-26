@@ -20,6 +20,7 @@ const (
 	vkRWin     = 0x5C
 	vkWin      = 0x5B
 	vkSpace    = 0x20
+	vkReturn   = 0x0D
 )
 
 // spaceRune is what a bare space leaves behind: the blank character itself, so

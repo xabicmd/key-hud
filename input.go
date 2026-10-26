@@ -35,6 +35,11 @@ func onKey(lParam uintptr, down bool) {
 	if ignoreInjected && kb.Flags&llkhfInjected != 0 {
 		return
 	}
+	// The intro screen swallows input before it becomes an instruction, so
+	// nothing below can advance a lane or a repeat run behind it.
+	if splashRef != nil && !splashRef.passKey(kb.VkCode, down) {
+		return
+	}
 	scan := kb.ScanCode
 	if scan == 0 {
 		scan = scanCode(kb.VkCode)
@@ -139,6 +144,11 @@ func clearActionRun() {
 // shows one label, because a fast wheel would otherwise push everything else
 // off the strip. The sideways wheel and the buttons keep their own handling.
 func onButton(name string) (Event, bool) {
+	// The intro is keyboard-only: a click must not paint a label behind it.
+	if splashRef != nil && !splashRef.passMouse() {
+		return Event{}, false
+	}
+
 	now := time.Now()
 	if name == "wheel up" || name == "wheel down" {
 		same := name == lastWheelRun && now.Sub(lastWheelRunAt) <= grouperRef.window

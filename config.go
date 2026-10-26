@@ -35,7 +35,7 @@ func defaultConfig() Config {
 		Colors: map[string]ColorStyle{
 			groupLetters: {Text: "#eafcff", Glow: "#35d6ff", GlowFar: "#0a5f7a"},
 			groupSymbols: {Text: "#ffe9b8", Glow: "#ffb703", GlowFar: "#7a4d00"},
-			groupCombo:   {Text: "#e6d4ff", Glow: "#a06bff", GlowFar: "#43148f"},
+			groupCombo:   {Text: "#ffd6ef", Glow: "#ff2d95", GlowFar: "#6b0040"},
 			groupMouse:   {Text: "#ffd9f6", Glow: "#ff3fd0", GlowFar: "#6d0a58"},
 		},
 	}

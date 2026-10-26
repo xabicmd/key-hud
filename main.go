@@ -2,7 +2,8 @@
 // mouse button you press, anywhere in Windows, as pixel text that sweeps
 // right-to-left and fades out.
 //
-// It is designed to fill a 1920x480 secondary display. Exit with Ctrl+Alt+Q.
+// It is designed to fill a 1920x480 secondary display. Press Enter on the intro
+// screen to start it, and Ctrl+Alt+Q to exit.
 package main
 
 import (
@@ -62,6 +63,11 @@ func main() {
 
 	grouperRef = newGrouper(time.Duration(cfg.GroupWindowMs)*time.Millisecond, cfg.Lanes)
 
+	// The intro comes up before the hooks exist, so the strip is muted from the
+	// first key. splash.go owns the rest.
+	splash := newSplashGate()
+	splashRef = splash
+
 	quit := make(chan struct{})
 	var startOnce sync.Once
 
@@ -87,6 +93,14 @@ func main() {
 		log.Printf("bind hudReady: %v (falling back to timer)", err)
 	}
 
+	// The page asks once at boot whether the intro is still up: the Enter press
+	// can land before the document exists, and the push would be lost.
+	if err := w.Bind("hudIntro", func() (bool, error) {
+		return splash.Pending(), nil
+	}); err != nil {
+		log.Printf("bind hudIntro: %v", err)
+	}
+
 	go func() {
 		select {
 		case <-time.After(2 * time.Second):
@@ -98,6 +112,12 @@ func main() {
 	go func() {
 		<-quit
 		w.Dispatch(func() { w.Terminate() })
+	}()
+
+	go func() {
+		splash.waitStart()
+		log.Print("intro dismissed; the strip is live")
+		hideIntro(w)
 	}()
 
 	addr, err := serveAssets(cfg)

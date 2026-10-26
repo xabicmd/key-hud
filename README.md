@@ -25,6 +25,21 @@ WH_KEYBOARD_LL + WH_MOUSE_LL (locked OS thread, Win32 message pump)
 - Only one copy can run. A second launch exits, because two copies would install
   two sets of hooks and paint every keystroke twice.
 
+## Start screen
+
+On launch the strip stays silent and shows three lines:
+
+```
+KEY-HUD BY XABICMD
+START (ENTER)
+TO CLOSE (CTRL+ALT+Q)
+```
+
+Press **Enter** to dismiss them and start capturing. Until then every key and
+mouse event is swallowed before it becomes a label, so nothing typed into the
+intro can shift the lane rotation or leak a stray label once the strip starts.
+**Ctrl+Alt+Q** still closes the window while the intro is up.
+
 ## Requirements
 
 - Windows 10/11 with the WebView2 runtime (preinstalled on current builds).
@@ -53,6 +68,7 @@ The files are split by responsibility, not by layer:
 | `config.go` | `key-hud.json`: defaults, merge and write-on-first-run |
 | `hook.go` | global Win32 hooks and raw message dispatch |
 | `input.go` | one decoded key or mouse event to one label instruction |
+| `splash.go` | the intro screen gate: mutes input until Enter starts the strip |
 | `keys.go` | key names and the modifier vocabulary |
 | `typing.go` | what the active layout types for a press, dead keys included |
 | `group.go` | word grouping, lane rotation and colour groups |
@@ -157,7 +173,7 @@ invalid JSON falls back to the defaults and logs why.
   "colors": {
     "letters": { "text": "#eafcff", "glow": "#35d6ff", "glowFar": "#0a5f7a" },
     "symbols": { "text": "#ffe9b8", "glow": "#ffb703", "glowFar": "#7a4d00" },
-    "combo":   { "text": "#e6d4ff", "glow": "#a06bff", "glowFar": "#43148f" },
+    "combo":   { "text": "#ffd6ef", "glow": "#ff2d95", "glowFar": "#6b0040" },
     "mouse":   { "text": "#ffd9f6", "glow": "#ff3fd0", "glowFar": "#6d0a58" }
   }
 }
@@ -203,7 +219,8 @@ screens instead of guessing.
 
 ## Exit
 
-There is no close button. Press **Ctrl+Alt+Q**, or kill the process.
+There is no close button. Press **Ctrl+Alt+Q**, or kill the process. Press
+**Enter** first if the intro screen is still up.
 
 ## Customizing further
 
@@ -212,6 +229,9 @@ which is embedded into the binary at build time:
 
 - `web/style.css` — layout, the CRT scanline and vignette layers. Both are purely
   cosmetic: delete those two divs and nothing breaks.
+- `web/splash.css` — the intro screen layout. Its colours come from `key-hud.json`.
+- `web/splash.js` — the intro screen: the three lines, `window.__hudStart` and the
+  `hudIntro` read that recovers a start that happened before the page loaded.
 - `web/app.js` — entry point: fetches `/api/config` and exposes `window.__hud`.
 - `web/stage.js` — the label elements, the per-lane anchors and the release queue.
 - `web/motion.js` — pure sweep geometry. The Node tests import this file directly.
@@ -292,5 +312,8 @@ for short and queued labels, the original fade-in/fade-out positions, the wait
 that keeps two labels on one lane from overlapping, and the rule that a label
 enters at the screen edge exactly when its lane is clear. One more test boots
 `web/app.js` in Node with a stubbed document, so a broken module graph or a
-broken `window.__hud` wiring fails there instead of only in the window. The Win32
-hooks and the WebView2 window are verified manually.
+broken `window.__hud` wiring fails there instead of only in the window. The
+splash has its own pair: `splash_test.go` pins the gate that mutes input until
+Enter and keeps a held Enter silent, and `tests/splash.test.mjs` pins the three
+lines and the two calls that drop them. The Win32 hooks and the WebView2 window
+are verified manually.

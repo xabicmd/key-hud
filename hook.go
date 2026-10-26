@@ -9,15 +9,10 @@ import (
 	"unsafe"
 )
 
-// Event is what the browser side receives for every captured input.
-type Event struct {
-	Kind  string `json:"kind"`  // "key" or "mouse"
-	Label string `json:"label"` // "ctrl+c", "click", "wheel up"
-}
-
 var (
 	hookEvents   chan Event
 	hookCallback uintptr // keeps the Windows callback alive for the GC
+	grouperRef   *grouper
 
 	// ignoreInjected drops synthetic input (macros, remote sessions). Off by
 	// default: a key you did not physically press is still a key press.
@@ -27,7 +22,7 @@ var (
 	// locked to its OS thread, so no synchronization is needed.
 	pressed   = map[uint32]bool{}
 	heldMods  = map[uint32]bool{}
-	heldOrder []uint32
+	rightAlt  bool // AltGr is right alt plus the ctrl Windows adds for it
 	lastWheel time.Time
 )
 
@@ -42,6 +37,9 @@ var (
 //     block. It does the minimum work and drops events on a full channel.
 func startHooks(quit chan struct{}) <-chan Event {
 	hookEvents = make(chan Event, 512)
+	if grouperRef == nil {
+		grouperRef = newGrouper(500*time.Millisecond, 3)
+	}
 	ready := make(chan struct{})
 
 	go func() {
@@ -130,37 +128,76 @@ func hookProc(nCode int32, wParam uintptr, lParam uintptr) uintptr {
 
 func onKey(lParam uintptr, down bool) {
 	kb := (*kbdLLHookStruct)(ptrAt(lParam))
-	vk := kb.VkCode
-
 	if ignoreInjected && kb.Flags&llkhfInjected != 0 {
 		return
 	}
+	scan := kb.ScanCode
+	if scan == 0 {
+		scan = scanCode(kb.VkCode)
+	}
+	handleKey(kb.VkCode, scan, down)
+}
 
+// handleKey applies one key transition and returns the instruction to publish,
+// if any. Auto-repeats, modifier bookkeeping and key releases produce none.
+//
+// What a key types is asked to the active layout, so the strip shows the
+// character that really appears: "@" instead of "shift+2", "á" instead of a
+// dead accent followed by "a". Only presses that type nothing (ctrl+c,
+// alt+tab, backspace, f5) are shown as keys.
+//
+// Only real modifiers become a combination prefix. A letter that is still held
+// down because the next key was pressed a few milliseconds later is just fast
+// typing, not "a+b"; treating it as a modifier is what turned "hola" into
+// "ho" + "l+a".
+func handleKey(vk, scan uint32, down bool) (Event, bool) {
 	if !down {
 		delete(pressed, vk)
 		if isModifier(vk) {
 			delete(heldMods, canonMod(vk))
-		} else {
-			removeHeld(vk)
+			if vk == vkRAlt {
+				rightAlt = false
+			}
 		}
-		return
+		return Event{}, false
 	}
 
 	// Auto-repeat: Windows keeps sending keydowns while a key is held. Show the
 	// press once, not sixty times a second.
 	if pressed[vk] {
-		return
+		return Event{}, false
 	}
 	pressed[vk] = true
 
 	if isModifier(vk) {
 		heldMods[canonMod(vk)] = true
-		return
+		if vk == vkRAlt {
+			rightAlt = true
+		}
+		return Event{}, false
 	}
 
-	label := buildCombo(vk)
-	heldOrder = append(heldOrder, vk)
-	emit(Event{Kind: "key", Label: label})
+	if typingModifiers() {
+		switch typed := readKeyText(vk, scan); {
+		case typed.dead:
+			// The accent waits for the next key. Showing a label now would
+			// claim a character that is not on screen yet.
+			return Event{}, false
+		case typed.text != "":
+			if typed.text == spaceRune {
+				// A bare space ends the word and leaves the blank behind it,
+				// but it never takes a lane: an invisible label would make the
+				// visible words look like they skip a line.
+				return emit(kindBreak, spaceRune), true
+			}
+			return emit(kindKey, typed.text), true
+		}
+	}
+
+	if len(heldMods) > 0 {
+		return emit(kindCombo, buildCombo(vk)), true
+	}
+	return emit(kindAction, keyLabel(vk)), true
 }
 
 func onButton(name string) {
@@ -173,15 +210,35 @@ func onButton(name string) {
 		}
 		lastWheel = now
 	}
-	emit(Event{Kind: "mouse", Label: buildComboLabel(name)})
+	emit(groupMouse, buildComboLabel(name))
 }
 
 func buildCombo(vk uint32) string {
 	return buildComboLabel(keyLabel(vk))
 }
 
-// buildComboLabel prefixes the active modifiers (and any other keys currently
-// held down) to the given key name: "ctrl+shift+p".
+// typingModifiers reports whether the modifiers held only shift which
+// character a key types: shift alone, or AltGr, which Windows reports as right
+// alt plus the ctrl it adds for it. Ctrl, alt, win or any other combination is
+// a command, and a command never types a character.
+func typingModifiers() bool {
+	altGr := rightAlt && heldMods[vkControl]
+	for m := range heldMods {
+		switch m {
+		case vkShift:
+		case vkControl, vkAlt:
+			if !altGr {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// buildComboLabel prefixes the active modifiers to the given key name:
+// "ctrl+shift+p". Other keys held at the same time are ignored on purpose.
 func buildComboLabel(key string) string {
 	parts := make([]string, 0, 5)
 	for _, m := range modOrder {
@@ -189,26 +246,18 @@ func buildComboLabel(key string) string {
 			parts = append(parts, m.name)
 		}
 	}
-	for _, k := range heldOrder {
-		parts = append(parts, keyLabel(k))
-	}
 	parts = append(parts, key)
 	return strings.Join(parts, "+")
 }
 
-func removeHeld(vk uint32) {
-	for i, k := range heldOrder {
-		if k == vk {
-			heldOrder = append(heldOrder[:i], heldOrder[i+1:]...)
-			return
-		}
-	}
-}
-
-// emit never blocks: it must not stall the hook callback.
-func emit(ev Event) {
+// emit asks the grouper what to do with this input and hands the resulting
+// instruction to the UI. It never blocks: it must not stall the hook callback.
+// It returns the instruction so callers and tests can see it.
+func emit(kind, label string) Event {
+	ev := grouperRef.feed(time.Now(), kind, label)
 	select {
 	case hookEvents <- ev:
 	default:
 	}
+	return ev
 }

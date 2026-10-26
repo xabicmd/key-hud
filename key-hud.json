@@ -1,0 +1,29 @@
+{
+  "speedPxPerSec": 320,
+  "groupWindowMs": 500,
+  "lanes": 3,
+  "fontSizeVh": 17,
+  "travelEndPx": 700,
+  "colors": {
+    "combo": {
+      "text": "#e6d4ff",
+      "glow": "#a06bff",
+      "glowFar": "#43148f"
+    },
+    "letters": {
+      "text": "#eafcff",
+      "glow": "#35d6ff",
+      "glowFar": "#0a5f7a"
+    },
+    "mouse": {
+      "text": "#ffd9f6",
+      "glow": "#ff3fd0",
+      "glowFar": "#6d0a58"
+    },
+    "symbols": {
+      "text": "#ffe9b8",
+      "glow": "#ffb703",
+      "glowFar": "#7a4d00"
+    }
+  }
+}

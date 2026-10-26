@@ -1,4 +1,4 @@
-/* Every knob you might want to tweak lives in :root. */
+/* Structural styles only. Every colour lives in key-hud.json. */
 @font-face {
   font-family: "Pixel";
   src: url("fonts/PressStart2P-Regular.ttf") format("truetype");
@@ -8,18 +8,9 @@
 }
 
 :root {
-  --bg: #000000;
-
-  --key: #eafcff;
-  --key-glow: #35d6ff;
-  --key-glow-far: #0a5f7a;
-
-  --mouse: #ffd9f6;
-  --mouse-glow: #ff3fd0;
-  --mouse-glow-far: #6d0a58;
-
+  /* Overwritten by app.js with a whole-pixel value: a bitmap font smears at
+     fractional sizes. */
   --font-size: 17vh;
-  --travel: 7s;
 }
 
 * {
@@ -31,7 +22,7 @@ body {
   height: 100%;
   margin: 0;
   padding: 0;
-  background: var(--bg);
+  background: #000000;
   overflow: hidden;
   cursor: none;
   user-select: none;
@@ -52,59 +43,35 @@ body {
   position: absolute;
   left: 0;
   margin: 0;
-  white-space: nowrap;
+  /* `pre` instead of `nowrap`: a bare space leaves a real blank at the end of
+     the word it closes, and `nowrap` would trim it and lose the gap. */
+  white-space: pre;
   font-family: inherit;
   font-size: var(--font-size);
   line-height: 1;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 
-  color: var(--key);
-  text-shadow:
-    0 0 0.06em var(--key),
-    0 0 0.22em var(--key-glow),
-    0 0 0.55em var(--key-glow),
-    0 0 1.10em var(--key-glow-far);
+  /* Colour and glow are set inline from key-hud.json. These are only the
+     fallback for the first frame. */
+  color: #eafcff;
+
+  /* Hidden until the Web Animations keyframes take over, so nothing flashes at
+     x=0 before the animation starts. */
+  opacity: 0;
+  transform: translateX(100vw);
 
   will-change: transform, opacity;
-  transform: translateX(100vw);
-  animation: sweep var(--travel) linear forwards;
 }
 
-.key.mouse {
-  color: var(--mouse);
-  text-shadow:
-    0 0 0.06em #ffffff,
-    0 0 0.22em var(--mouse-glow),
-    0 0 0.55em var(--mouse-glow),
-    0 0 1.10em var(--mouse-glow-far);
-}
-
-@keyframes sweep {
-  0% {
-    transform: translateX(100vw);
-    opacity: 0;
-  }
-  6% {
-    opacity: 1;
-  }
-  76% {
-    opacity: 1;
-  }
-  100% {
-    transform: translateX(-100%);
-    opacity: 0;
-  }
-}
-
-/* Decorative CRT layers. Purely cosmetic: drop them and nothing breaks. */
+/* Decorative CRT layers. Purely cosmetic: delete them and nothing breaks. */
 #scan {
   position: fixed;
   inset: 0;
   pointer-events: none;
   background: repeating-linear-gradient(
     to bottom,
-    rgba(0, 0, 0, 0.40) 0 1px,
+    rgba(0, 0, 0, 0.4) 0 1px,
     rgba(0, 0, 0, 0) 1px 3px
   );
   opacity: 0.55;

@@ -23,7 +23,19 @@ var (
 	procSetWindowLongW      = modUser32.NewProc("SetWindowLongW")
 	procSetWindowPos        = modUser32.NewProc("SetWindowPos")
 	procGetModuleHandleW    = modKernel32.NewProc("GetModuleHandleW")
+	procCreateMutexW        = modKernel32.NewProc("CreateMutexW")
+	procSetLastError        = modKernel32.NewProc("SetLastError")
+
+	// Translation of a key press into the character the active layout types.
+	procToUnicodeEx              = modUser32.NewProc("ToUnicodeEx")
+	procGetKeyboardLayout        = modUser32.NewProc("GetKeyboardLayout")
+	procGetForegroundWindow      = modUser32.NewProc("GetForegroundWindow")
+	procGetWindowThreadProcessID = modUser32.NewProc("GetWindowThreadProcessId")
+	procGetAsyncKeyState         = modUser32.NewProc("GetAsyncKeyState")
+	procMapVirtualKeyExW         = modUser32.NewProc("MapVirtualKeyExW")
 )
+
+const errorAlreadyExists = 183
 
 const (
 	whKeyboardLL = 13
@@ -194,6 +206,41 @@ func describeMonitors(mons []monitor) string {
 		parts = append(parts, fmt.Sprintf("%d:%dx%d@%d,%d%s", i+1, m.Rect.W(), m.Rect.H(), m.Rect.Left, m.Rect.Top, tag))
 	}
 	return strings.Join(parts, " ")
+}
+
+// singleInstanceMutex is kept for the whole process lifetime. Releasing it
+// early would defeat the check.
+var singleInstanceMutex uintptr
+
+// acquireSingleInstance reports whether this process is the only key-hud
+// running. A second copy would install a second pair of global hooks and paint
+// every keystroke twice — which looks exactly like labels overlapping, so it is
+// worth refusing outright rather than debugging twice.
+//
+// The mutex lives in the Local namespace so it is per-session: two users logged
+// in at once can each run their own HUD.
+func acquireSingleInstance() bool {
+	name, err := syscall.UTF16PtrFromString(`Local\key-hud-single-instance`)
+	if err != nil {
+		return true
+	}
+
+	// CreateMutexW only sets ERROR_ALREADY_EXISTS; it does not clear it. Zero it
+	// first so a leftover value cannot be mistaken for "already running".
+	procSetLastError.Call(0)
+
+	h, _, callErr := procCreateMutexW.Call(0, 0, uintptr(unsafe.Pointer(name)))
+	if h == 0 {
+		// Could not create the mutex at all. Running anyway is friendlier than
+		// refusing to start for a reason the user cannot act on.
+		return true
+	}
+	singleInstanceMutex = h
+
+	if errno, ok := callErr.(syscall.Errno); ok && errno == errorAlreadyExists {
+		return false
+	}
+	return true
 }
 
 // styleAsOverlay turns the freshly created webview window into a borderless,

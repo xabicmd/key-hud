@@ -173,7 +173,7 @@ invalid JSON falls back to the defaults and logs why.
   "colors": {
     "letters": { "text": "#eafcff", "glow": "#35d6ff", "glowFar": "#0a5f7a" },
     "symbols": { "text": "#ffe9b8", "glow": "#ffb703", "glowFar": "#7a4d00" },
-    "combo":   { "text": "#ffd6ef", "glow": "#ff2d95", "glowFar": "#6b0040" },
+    "combo":   { "text": "#e6d4ff", "glow": "#a06bff", "glowFar": "#43148f" },
     "mouse":   { "text": "#ffd9f6", "glow": "#ff3fd0", "glowFar": "#6d0a58" }
   }
 }

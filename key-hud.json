@@ -6,9 +6,9 @@
   "travelEndPx": 700,
   "colors": {
     "combo": {
-      "text": "#ffd6ef",
-      "glow": "#ff2d95",
-      "glowFar": "#6b0040"
+      "text": "#e6d4ff",
+      "glow": "#a06bff",
+      "glowFar": "#43148f"
     },
     "letters": {
       "text": "#eafcff",

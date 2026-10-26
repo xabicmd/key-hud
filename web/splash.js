@@ -43,20 +43,20 @@ export function createSplash(root) {
   }
 
   return {
-    // configure applies the strip palette: the title wears the symbol colour
-    // (numbers, backspace), the exit hint the combination colour and the start
-    // hint the letter colour.
+    // configure applies the strip palette: the title wears the symbol yellow,
+    // the start hint the letter colour and the exit hint the mouse pink (the
+    // same colour a click gets).
     configure(cfg) {
-      const symbols = styleFor(cfg.colors, "symbols");
-      const combo = styleFor(cfg.colors, "combo");
+      const title = styleFor(cfg.colors, "symbols");
       const letters = styleFor(cfg.colors, "letters");
+      const mouse = styleFor(cfg.colors, "mouse");
 
-      lines[0].style.color = symbols.color;
-      lines[0].style.textShadow = symbols.shadow;
+      lines[0].style.color = title.color;
+      lines[0].style.textShadow = title.shadow;
       lines[1].style.color = letters.color;
       lines[1].style.textShadow = letters.shadow;
-      lines[2].style.color = combo.color;
-      lines[2].style.textShadow = combo.shadow;
+      lines[2].style.color = mouse.color;
+      lines[2].style.textShadow = mouse.shadow;
     },
     hide,
   };

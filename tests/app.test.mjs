@@ -1,9 +1,12 @@
-"use strict";
+import test from "node:test";
+import assert from "node:assert/strict";
 
-const test = require("node:test");
-const assert = require("node:assert/strict");
-
-const { nextStartX, laneWaitMs, labelKeyframes, rightEdge } = require("../web/app.js");
+import {
+  nextStartX,
+  laneWaitMs,
+  labelKeyframes,
+  rightEdge,
+} from "../web/motion.js";
 
 const VW = 1920;
 const SPEED = 320; // key-hud.json default

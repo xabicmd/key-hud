@@ -10,17 +10,22 @@ import (
 // starts a dead circumflex ("^" then "a" gives "â"), and "'" then "a" gives
 // "á". ToUnicodeEx is the API that answers exactly that question.
 //
-// ToUnicodeEx also owns the dead-key state, which Windows keeps per thread. The
-// hook thread is locked to one OS thread, so letting it translate every press
-// mirrors what the foreground application does with the same key sequence:
-// nothing has to be composed by hand.
+// ToUnicodeEx reads, and by default also writes, the kernel-mode keyboard
+// buffer. That buffer is shared with every application: a translation that
+// stores a dead key consumes the accent the user is typing right now, and the
+// whole desktop stops producing accented characters while this app runs. That
+// was a real bug here: it ate accents and "ñ". Bit 2 of wFlags makes the
+// translation read-only, and because a pending accent is still visible to the
+// caller, a dead key followed by a letter still shows the composed character.
 
 const (
-	vkMenu    = 0x12 // VK_MENU enters the key-state array as "alt"
-	vkCapital = 0x14 // VK_CAPITAL
-	vkNumLock = 0x90 // VK_NUMLOCK
-
+	vkCapital  = 0x14 // VK_CAPITAL
+	vkNumLock  = 0x90 // VK_NUMLOCK
 	mapVKToVSC = 0
+
+	// flagNoStateChange is bit 2 of the ToUnicodeEx wFlags parameter: translate
+	// without changing the keyboard state (Windows 10, version 1607 and newer).
+	flagNoStateChange = 0x04
 )
 
 // keyText is what the layout produces for one key press.
@@ -40,11 +45,13 @@ func layoutKeyText(vk, scan uint32) keyText {
 	if heldMods[vkShift] {
 		state[vkShift] = 0x80
 	}
-	if heldMods[vkControl] {
+	if heldMods[vkControl] || rightAlt {
+		// AltGr is reported as right alt plus ctrl; supplying the ctrl even
+		// when the hook has not seen it yet keeps the translation correct.
 		state[vkControl] = 0x80
 	}
 	if heldMods[vkAlt] {
-		state[vkMenu] = 0x80
+		state[vkAlt] = 0x80
 	}
 	if keyToggled(vkCapital) {
 		state[vkCapital] = 0x01
@@ -60,7 +67,7 @@ func layoutKeyText(vk, scan uint32) keyText {
 		uintptr(unsafe.Pointer(&state[0])),
 		uintptr(unsafe.Pointer(&buf[0])),
 		uintptr(len(buf)),
-		0,
+		flagNoStateChange,
 		activeLayout(),
 	)
 
@@ -102,8 +109,8 @@ func isPrintable(text string) bool {
 // best available answer.
 func activeLayout() uintptr {
 	if fg, _, _ := procGetForegroundWindow.Call(); fg != 0 {
-		var pid uint32
-		if tid, _, _ := procGetWindowThreadProcessID.Call(fg, uintptr(unsafe.Pointer(&pid))); tid != 0 {
+		var processID uint32
+		if tid, _, _ := procGetWindowThreadProcessID.Call(fg, uintptr(unsafe.Pointer(&processID))); tid != 0 {
 			if hkl, _, _ := procGetKeyboardLayout.Call(tid); hkl != 0 {
 				return hkl
 			}

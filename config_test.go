@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 func TestDefaultConfigIsComplete(t *testing.T) {
@@ -152,19 +151,5 @@ func TestLoadConfigReadsUserValues(t *testing.T) {
 	// Groups absent from the file keep their defaults.
 	if got.Colors[groupMouse] != defaultConfig().Colors[groupMouse] {
 		t.Fatalf("mouse colour = %+v", got.Colors[groupMouse])
-	}
-}
-
-func TestGrouperUsesConfiguredWindow(t *testing.T) {
-	// The 500 ms rule must come from the config, not from a hardcoded constant.
-	g := newGrouper(250*time.Millisecond, 2)
-	t0 := time.Unix(0, 0)
-
-	g.feed(t0, "key", "a")
-	if ev := g.feed(t0.Add(200*time.Millisecond), "key", "b"); ev.Kind != "append" {
-		t.Fatalf("inside a 250 ms window: %+v, want append", ev)
-	}
-	if ev := g.feed(t0.Add(1000*time.Millisecond), "key", "c"); ev.Kind != "new" {
-		t.Fatalf("past a 250 ms window: %+v, want a new label", ev)
 	}
 }

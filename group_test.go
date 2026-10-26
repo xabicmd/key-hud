@@ -44,7 +44,7 @@ func TestGrouperComboIsAtomic(t *testing.T) {
 	g := newGrouper(500*time.Millisecond, 3)
 	t0 := time.Unix(0, 0)
 
-	combo := g.feed(t0, "key", "ctrl+c")
+	combo := g.feed(t0, kindCombo, "ctrl+c")
 	if combo.Kind != "new" || combo.Group != groupCombo || combo.Lane != 0 {
 		t.Fatalf("combo = %+v", combo)
 	}
@@ -193,8 +193,10 @@ func TestClassify(t *testing.T) {
 		{"key", "f24", groupSymbols},
 		{"action", "backspace", groupSymbols},
 		{"action", "tab", groupSymbols},
-		{"key", "ctrl+c", groupCombo},
-		{"key", "ctrl+shift+alt+win+p", groupCombo},
+		{"combo", "ctrl+c", groupCombo},
+		{"combo", "ctrl+shift+alt+win+p", groupCombo},
+		// A typed "+" is text, not a combination.
+		{"key", "+", groupSymbols},
 		{"mouse", "click", groupMouse},
 		{"mouse", "wheel up", groupMouse},
 		// A modified mouse event stays a mouse event.
@@ -212,5 +214,34 @@ func TestClassifyHandlesMultibyte(t *testing.T) {
 	// A single non-ASCII letter must not be mistaken for a multi-character key.
 	if got := classify("key", "ñ"); got != groupLetters {
 		t.Fatalf("classify(ñ) = %q, want %q", got, groupLetters)
+	}
+}
+
+// A typed symbol joins the word even when it is the plus sign: it is text, not
+// a combination of keys.
+func TestGrouperTypedPlusIsText(t *testing.T) {
+	g := newGrouper(500*time.Millisecond, 3)
+	t0 := time.Unix(0, 0)
+
+	if ev := g.feed(t0, kindKey, "c"); ev.Kind != "new" {
+		t.Fatalf("first letter = %+v", ev)
+	}
+	ev := g.feed(t0.Add(80*time.Millisecond), kindKey, "+")
+	if ev.Kind != "append" || ev.Text != "+" {
+		t.Fatalf("typed plus = %+v, want it appended to the word", ev)
+	}
+}
+
+func TestGrouperUsesConfiguredWindow(t *testing.T) {
+	// The 500 ms rule must come from the config, not from a hardcoded constant.
+	g := newGrouper(250*time.Millisecond, 2)
+	t0 := time.Unix(0, 0)
+
+	g.feed(t0, "key", "a")
+	if ev := g.feed(t0.Add(200*time.Millisecond), "key", "b"); ev.Kind != "append" {
+		t.Fatalf("inside a 250 ms window: %+v, want append", ev)
+	}
+	if ev := g.feed(t0.Add(1000*time.Millisecond), "key", "c"); ev.Kind != "new" {
+		t.Fatalf("past a 250 ms window: %+v, want a new label", ev)
 	}
 }

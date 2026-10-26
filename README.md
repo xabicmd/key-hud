@@ -317,3 +317,18 @@ splash has its own pair: `splash_test.go` pins the gate that mutes input until
 Enter and keeps a held Enter silent, and `tests/splash.test.mjs` pins the three
 lines and the two calls that drop them. The Win32 hooks and the WebView2 window
 are verified manually.
+
+## License
+
+key-hud is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version.
+
+It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+PURPOSE. See the GNU General Public License for more details.
+
+The full text is in [`LICENSE`](LICENSE).
+
+Copyright (C) 2026 @xabicmd

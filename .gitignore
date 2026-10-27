@@ -27,9 +27,9 @@ go.work.sum
 # Generated at runtime next to the executable
 key-hud.json
 
-# Engram: commit the project identity, ignore local sync state
-.engram/*
-!.engram/config.json
+# AI tooling local state (generated per machine, not shared)
+.atl/
+.engram/
 
 # Local verification scratch
 e*.txt

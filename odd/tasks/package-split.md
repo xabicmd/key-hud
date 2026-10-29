@@ -36,7 +36,7 @@ update there.
 | T2 | S1 | inline | done | `go vet ./...` clean, `go test ./...` all ok |
 | T3 | S3 | inline | done | `go build`, README layout section rewritten |
 | T4 | S5 | inline | done | `node --test tests/` 15/15, README paths updated |
-| T5 | S4 | inline | pending | manual: exe launch + hooks + intro + Ctrl+Alt+Q |
+| T5 | S4 | inline | done | manual: exe launched, intro, labels, Ctrl+Alt+Q OK |
 
 ## Log
 
@@ -79,3 +79,14 @@ paths. The nine web assets are byte-identical to the base. It also contributed t
 regression suites, now committed: `internal/capture/wire_test.go` (JSON wire format, rate
 limits, per-pipeline state, non-blocking buffer) and `internal/stage/serve_test.go`
 (embed root, `/api/config` shape, `noCache`, 404).
+
+**L8** — committed as `9234fdf` on branch `structure`; working tree clean. Only
+`hookCallback` remains a package-level mutable var (the Windows callback needs one GC-held
+slot).
+
+**L9** — T5 closed by the user: "va perfecta". The built exe (main path
+`keyhud/cmd/key-hud`, checkable with `go version -m`) launched, showed the intro,
+dismissed it with Enter, painted labels and closed with Ctrl+Alt+Q. All five tasks are
+done; the feature is closed on branch `structure`. Note for the record: `CreationTime` on
+Windows never moves when `go build -o` rewrites an existing binary, so the file date is
+not a build indicator; the embedded main package path is.

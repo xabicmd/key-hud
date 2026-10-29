@@ -1,8 +1,10 @@
-package main
+package platform
 
 import (
 	"syscall"
 	"unsafe"
+
+	"keyhud/internal/win32"
 )
 
 // This file makes the webview window behave like an overlay instead of a
@@ -12,14 +14,14 @@ import (
 // early would defeat the check.
 var singleInstanceMutex uintptr
 
-// acquireSingleInstance reports whether this process is the only key-hud
+// AcquireSingleInstance reports whether this process is the only key-hud
 // running. A second copy would install a second pair of global hooks and paint
 // every keystroke twice — which looks exactly like labels overlapping, so it is
 // worth refusing outright rather than debugging twice.
 //
 // The mutex lives in the Local namespace so it is per-session: two users logged
 // in at once can each run their own HUD.
-func acquireSingleInstance() bool {
+func AcquireSingleInstance() bool {
 	name, err := syscall.UTF16PtrFromString(`Local\key-hud-single-instance`)
 	if err != nil {
 		return true
@@ -27,9 +29,9 @@ func acquireSingleInstance() bool {
 
 	// CreateMutexW only sets ERROR_ALREADY_EXISTS; it does not clear it. Zero it
 	// first so a leftover value cannot be mistaken for "already running".
-	procSetLastError.Call(0)
+	win32.SetLastError.Call(0)
 
-	h, _, callErr := procCreateMutexW.Call(0, 0, uintptr(unsafe.Pointer(name)))
+	h, _, callErr := win32.CreateMutexW.Call(0, 0, uintptr(unsafe.Pointer(name)))
 	if h == 0 {
 		// Could not create the mutex at all. Running anyway is friendlier than
 		// refusing to start for a reason the user cannot act on.
@@ -37,40 +39,40 @@ func acquireSingleInstance() bool {
 	}
 	singleInstanceMutex = h
 
-	if errno, ok := callErr.(syscall.Errno); ok && errno == errorAlreadyExists {
+	if errno, ok := callErr.(syscall.Errno); ok && errno == win32.ERROR_ALREADY_EXISTS {
 		return false
 	}
 	return true
 }
 
-// styleAsOverlay turns the freshly created webview window into a borderless,
+// StyleAsOverlay turns the freshly created webview window into a borderless,
 // topmost overlay that exactly covers the target monitor. A WS_POPUP window
-// sized to the monitor rect is what "fullscreen" means here: no caption, no
+// sized to the monitor win32.Rect is what "fullscreen" means here: no caption, no
 // resize grip, no taskbar entry, no F11 needed.
-func styleAsOverlay(hwnd uintptr, r rect, topmost, noActivate bool) {
-	procSetWindowLongW.Call(hwnd, gwlStyle, uintptr(wsPopup|wsVisible))
+func StyleAsOverlay(hwnd uintptr, r win32.Rect, topmost, noActivate bool) {
+	win32.SetWindowLongW.Call(hwnd, win32.GWL_STYLE, uintptr(win32.WS_POPUP|win32.WS_VISIBLE))
 
-	ex := uintptr(wsExToolWindow)
+	ex := uintptr(win32.WS_EX_TOOLWINDOW)
 	if topmost {
-		ex |= wsExTopmost
+		ex |= win32.WS_EX_TOPMOST
 	}
 	if noActivate {
-		ex |= wsExNoActivate
+		ex |= win32.WS_EX_NOACTIVATE
 	}
-	procSetWindowLongW.Call(hwnd, gwlExStyle, ex)
+	win32.SetWindowLongW.Call(hwnd, win32.GWL_EXSTYLE, ex)
 
 	insertAfter := uintptr(0) // HWND_TOP
 	if topmost {
 		insertAfter = ^uintptr(0) // HWND_TOPMOST
 	}
 
-	procSetWindowPos.Call(
+	win32.SetWindowPos.Call(
 		hwnd,
 		insertAfter,
 		uintptr(r.Left),
 		uintptr(r.Top),
 		uintptr(r.W()),
 		uintptr(r.H()),
-		swpFrameChanged|swpShowWindow|swpNoActivate,
+		win32.SWP_FRAMECHANGED|win32.SWP_SHOWWINDOW|win32.SWP_NOACTIVATE,
 	)
 }

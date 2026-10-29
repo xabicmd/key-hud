@@ -60,7 +60,7 @@ test("the page boots, applies /api/config and renders instructions", async () =>
     }),
   });
 
-  await import("../web/app.js");
+  await import("../internal/stage/web/app.js");
   await nextMicrotasks();
 
   assert.equal(typeof window.__hud, "function", "window.__hud was not installed");

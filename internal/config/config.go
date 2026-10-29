@@ -1,10 +1,20 @@
-package main
+package config
 
 import (
 	"encoding/json"
 	"log"
 	"os"
 	"path/filepath"
+)
+
+// The colour groups are a contract with the page: every Event carries one of
+// these names and the web side looks its colours up by that exact string. They
+// live here because they are the keys of the "colors" object in the config file.
+const (
+	GroupLetters = "letters"
+	GroupSymbols = "symbols"
+	GroupCombo   = "combo"
+	GroupMouse   = "mouse"
 )
 
 // ColorStyle is the text colour and its two glow layers for one kind of input.
@@ -25,7 +35,7 @@ type Config struct {
 	Colors        map[string]ColorStyle `json:"colors"`
 }
 
-func defaultConfig() Config {
+func Default() Config {
 	return Config{
 		SpeedPxPerSec: 320,
 		GroupWindowMs: 500,
@@ -33,17 +43,17 @@ func defaultConfig() Config {
 		FontSizeVh:    17,
 		TravelEndPx:   700,
 		Colors: map[string]ColorStyle{
-			groupLetters: {Text: "#eafcff", Glow: "#35d6ff", GlowFar: "#0a5f7a"},
-			groupSymbols: {Text: "#ffe9b8", Glow: "#ffb703", GlowFar: "#7a4d00"},
-			groupCombo:   {Text: "#e6d4ff", Glow: "#a06bff", GlowFar: "#43148f"},
-			groupMouse:   {Text: "#ffd9f6", Glow: "#ff3fd0", GlowFar: "#6d0a58"},
+			GroupLetters: {Text: "#eafcff", Glow: "#35d6ff", GlowFar: "#0a5f7a"},
+			GroupSymbols: {Text: "#ffe9b8", Glow: "#ffb703", GlowFar: "#7a4d00"},
+			GroupCombo:   {Text: "#e6d4ff", Glow: "#a06bff", GlowFar: "#43148f"},
+			GroupMouse:   {Text: "#ffd9f6", Glow: "#ff3fd0", GlowFar: "#6d0a58"},
 		},
 	}
 }
 
-// configPath keeps the config next to the executable, so the shortcut you drop
+// Path keeps the config next to the executable, so the shortcut you drop
 // in shell:startup and the config file always travel together.
-func configPath() string {
+func Path() string {
 	exe, err := os.Executable()
 	if err != nil {
 		return "key-hud.json"
@@ -51,13 +61,13 @@ func configPath() string {
 	return filepath.Join(filepath.Dir(exe), "key-hud.json")
 }
 
-func loadConfig(path string) Config {
-	cfg := defaultConfig()
+func Load(path string) Config {
+	cfg := Default()
 
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			writeDefaultConfig(path, cfg)
+			WriteDefault(path, cfg)
 		} else {
 			log.Printf("config: %v (using defaults)", err)
 		}
@@ -71,10 +81,10 @@ func loadConfig(path string) Config {
 		return cfg
 	}
 
-	return mergeConfig(cfg, user)
+	return Merge(cfg, user)
 }
 
-func writeDefaultConfig(path string, cfg Config) {
+func WriteDefault(path string, cfg Config) {
 	out, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return
@@ -88,7 +98,7 @@ func writeDefaultConfig(path string, cfg Config) {
 
 // mergeConfig applies whatever the user actually set and keeps the default for
 // everything else, so deleting a key never breaks the app.
-func mergeConfig(base, user Config) Config {
+func Merge(base, user Config) Config {
 	if user.SpeedPxPerSec > 0 {
 		base.SpeedPxPerSec = user.SpeedPxPerSec
 	}

@@ -1,8 +1,10 @@
-package main
+package capture
 
 import (
 	"unicode/utf16"
 	"unsafe"
+
+	"keyhud/internal/win32"
 )
 
 // What a key press types is decided by the active keyboard layout, not by the
@@ -34,23 +36,23 @@ type keyText struct {
 	dead bool   // a dead key is waiting for the next press to compose
 }
 
-// readKeyText asks the active layout what a key press types. It is a variable so
-// tests can answer without depending on the layout installed on the machine.
-var readKeyText = layoutKeyText
-
 // layoutKeyText builds the modifier state the hook has seen and asks the layout
 // to translate the press.
-func layoutKeyText(vk, scan uint32) keyText {
+//
+// It is the pipeline's default for readKeyText, and it reads the pipeline's own
+// held-modifier state: what a key types depends on what is held right now, so it
+// has no meaning without that state.
+func (p *Pipeline) layoutKeyText(vk, scan uint32) keyText {
 	var state [256]byte
-	if heldMods[vkShift] {
+	if p.heldMods[vkShift] {
 		state[vkShift] = 0x80
 	}
-	if heldMods[vkControl] || rightAlt {
+	if p.heldMods[vkControl] || p.rightAlt {
 		// AltGr is reported as right alt plus ctrl; supplying the ctrl even
 		// when the hook has not seen it yet keeps the translation correct.
 		state[vkControl] = 0x80
 	}
-	if heldMods[vkAlt] {
+	if p.heldMods[vkAlt] {
 		state[vkAlt] = 0x80
 	}
 	if keyToggled(vkCapital) {
@@ -61,7 +63,7 @@ func layoutKeyText(vk, scan uint32) keyText {
 	}
 
 	var buf [8]uint16
-	n, _, _ := procToUnicodeEx.Call(
+	n, _, _ := win32.ToUnicodeEx.Call(
 		uintptr(vk),
 		uintptr(scan),
 		uintptr(unsafe.Pointer(&state[0])),
@@ -108,28 +110,28 @@ func isPrintable(text string) bool {
 // the one it types. Without a foreground window the thread's own layout is the
 // best available answer.
 func activeLayout() uintptr {
-	if fg, _, _ := procGetForegroundWindow.Call(); fg != 0 {
+	if fg, _, _ := win32.GetForegroundWindow.Call(); fg != 0 {
 		var processID uint32
-		if tid, _, _ := procGetWindowThreadProcessID.Call(fg, uintptr(unsafe.Pointer(&processID))); tid != 0 {
-			if hkl, _, _ := procGetKeyboardLayout.Call(tid); hkl != 0 {
+		if tid, _, _ := win32.GetWindowThreadProcessID.Call(fg, uintptr(unsafe.Pointer(&processID))); tid != 0 {
+			if hkl, _, _ := win32.GetKeyboardLayout.Call(tid); hkl != 0 {
 				return hkl
 			}
 		}
 	}
-	hkl, _, _ := procGetKeyboardLayout.Call(0)
+	hkl, _, _ := win32.GetKeyboardLayout.Call(0)
 	return hkl
 }
 
 // keyToggled reports a lock key (caps, num) that is currently on. The async
 // state is used because the hook thread never receives those key messages.
 func keyToggled(vk uint32) bool {
-	r, _, _ := procGetAsyncKeyState.Call(uintptr(vk))
+	r, _, _ := win32.GetAsyncKeyState.Call(uintptr(vk))
 	return r&0x0001 != 0
 }
 
 // scanCode recovers the scan code for a virtual key. The hook already carries
 // it for real keystrokes; this is the fallback and what tests use.
 func scanCode(vk uint32) uint32 {
-	r, _, _ := procMapVirtualKeyExW.Call(uintptr(vk), mapVKToVSC, activeLayout())
+	r, _, _ := win32.MapVirtualKeyExW.Call(uintptr(vk), mapVKToVSC, activeLayout())
 	return uint32(r)
 }

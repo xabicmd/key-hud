@@ -1,9 +1,11 @@
-package main
+package capture
 
 import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"keyhud/internal/config"
 )
 
 // Event is one instruction for the browser: either start a new label on a lane,
@@ -21,13 +23,10 @@ const (
 	kindAction = "action" // performs an action, always its own label
 	kindCombo  = "combo"  // a key combination, always its own label
 	kindBreak  = "break"  // ends the word without taking a lane (a bare space)
-)
 
-const (
-	groupLetters = "letters"
-	groupSymbols = "symbols"
-	groupCombo   = "combo"
-	groupMouse   = "mouse"
+	// A mouse event has no key kind of its own: its kind is its colour group,
+	// so the label it produces can never be mistaken for typed text.
+	kindMouse = config.GroupMouse
 )
 
 // classify decides which colour group a captured input belongs to. The kind
@@ -35,15 +34,15 @@ const (
 // everything: a ctrl+click is still a mouse event.
 func classify(kind, label string) string {
 	switch kind {
-	case groupMouse:
-		return groupMouse
+	case kindMouse:
+		return config.GroupMouse
 	case kindCombo:
-		return groupCombo
+		return config.GroupCombo
 	}
 	if r, ok := loneRune(label); ok && unicode.IsLetter(r) {
-		return groupLetters
+		return config.GroupLetters
 	}
-	return groupSymbols
+	return config.GroupSymbols
 }
 
 func loneRune(s string) (rune, bool) {
@@ -101,7 +100,7 @@ func (g *grouper) feed(now time.Time, kind, label string) Event {
 		return Event{Kind: "space", Text: label}
 	}
 
-	isMouse := kind == groupMouse
+	isMouse := kind == kindMouse
 	atomic := isMouse || kind == kindAction || kind == kindCombo
 	gap := now.Sub(g.last)
 

@@ -1,10 +1,6 @@
-package main
+package capture
 
-import (
-	"sync/atomic"
-
-	webview2 "github.com/jchv/go-webview2"
-)
+import "sync/atomic"
 
 // This file owns the intro screen: the three lines the window shows on launch
 // and the single key that leaves them. The page paints them; the gate below
@@ -14,37 +10,39 @@ import (
 // screen a key is dropped without touching the grouping, lane or repeat state,
 // so the first label after the start lands exactly where it would on a strip
 // that had just been opened.
+//
+// It is an explicit value passed in Options, not a package global: a pipeline
+// without a gate simply has no intro, and nothing can install one behind its
+// back.
 
-// splashRef is the gate the hook consults. It stays nil when no intro was
-// installed, which leaves the hook working exactly as before.
-var splashRef *splashGate
-
-// splashGate remembers whether the strip is still waiting for its start key.
+// Gate remembers whether the strip is still waiting for its start key.
 // The hook thread reads it on every input; main waits for the start signal.
-type splashGate struct {
+type Gate struct {
 	pending atomic.Bool // the intro is still on screen
 	eaten   atomic.Bool // the start press is still held, so its repeats stay silent
 	started chan struct{}
 }
 
-func newSplashGate() *splashGate {
-	g := &splashGate{started: make(chan struct{}, 1)}
+// NewGate arms the intro. The pipeline built with this gate stays silent until
+// WaitStart returns.
+func NewGate() *Gate {
+	g := &Gate{started: make(chan struct{}, 1)}
 	g.pending.Store(true)
 	return g
 }
 
 // Pending reports whether the intro is still on screen.
-func (g *splashGate) Pending() bool {
+func (g *Gate) Pending() bool {
 	return g.pending.Load()
 }
 
-// passKey reports whether the input pipeline should see this key transition.
+// PassKey reports whether the input pipeline should see this key transition.
 //
 // While the intro is on screen only Enter is meaningful: it starts the strip
 // and is swallowed, and every other key is dropped. The start press stays
 // silent until it is released, so holding Enter does not paint an ENTER label
 // over the fresh screen.
-func (g *splashGate) passKey(vk uint32, down bool) bool {
+func (g *Gate) PassKey(vk uint32, down bool) bool {
 	if vk == vkReturn && g.eaten.Load() {
 		if !down {
 			g.eaten.Store(false)
@@ -66,19 +64,13 @@ func (g *splashGate) passKey(vk uint32, down bool) bool {
 	return false
 }
 
-// passMouse reports whether the input pipeline should see a mouse event. The
+// PassMouse reports whether the input pipeline should see a mouse event. The
 // intro is keyboard-only: a click must not paint a label behind the text.
-func (g *splashGate) passMouse() bool {
+func (g *Gate) PassMouse() bool {
 	return !g.Pending()
 }
 
-// waitStart blocks until the start key arrives.
-func (g *splashGate) waitStart() {
+// WaitStart blocks until the start key arrives.
+func (g *Gate) WaitStart() {
 	<-g.started
-}
-
-// hideIntro asks the page to drop the intro. Eval is a WebView2 COM call and
-// must run on the UI thread.
-func hideIntro(w webview2.WebView) {
-	w.Dispatch(func() { w.Eval("window.__hudStart&&window.__hudStart()") })
 }

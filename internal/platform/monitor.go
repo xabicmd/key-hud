@@ -1,4 +1,4 @@
-package main
+package platform
 
 import (
 	"fmt"
@@ -6,33 +6,35 @@ import (
 	"strings"
 	"syscall"
 	"unsafe"
+
+	"keyhud/internal/win32"
 )
 
 // This file answers one question: which screen should the strip cover?
 
 type monitor struct {
-	Rect    rect
+	Rect    win32.Rect
 	Primary bool
 }
 
 func enumMonitors() []monitor {
 	var out []monitor
 	cb := syscall.NewCallback(func(hMon, hdc, lprc, data uintptr) uintptr {
-		mi := monitorInfo{CbSize: uint32(unsafe.Sizeof(monitorInfo{}))}
-		procGetMonitorInfoW.Call(hMon, uintptr(unsafe.Pointer(&mi)))
+		mi := win32.MonitorInfo{CbSize: uint32(unsafe.Sizeof(win32.MonitorInfo{}))}
+		win32.GetMonitorInfoW.Call(hMon, uintptr(unsafe.Pointer(&mi)))
 		out = append(out, monitor{Rect: mi.RcMonitor, Primary: mi.DwFlags&1 != 0})
 		return 1
 	})
-	procEnumDisplayMonitors.Call(0, 0, cb, 0)
+	win32.EnumDisplayMonitors.Call(0, 0, cb, 0)
 	return out
 }
 
-// pickMonitor resolves the target screen from a spec of the form "1920x480"
+// PickMonitor resolves the target screen from a spec of the form "1920x480"
 // (match by size), "2" (1-based index) or "primary".
-func pickMonitor(spec string) (rect, error) {
+func PickMonitor(spec string) (win32.Rect, error) {
 	mons := enumMonitors()
 	if len(mons) == 0 {
-		return rect{}, fmt.Errorf("no monitors detected")
+		return win32.Rect{}, fmt.Errorf("no monitors detected")
 	}
 
 	spec = strings.TrimSpace(strings.ToLower(spec))
@@ -51,17 +53,17 @@ func pickMonitor(spec string) (rect, error) {
 				return m.Rect, nil
 			}
 		}
-		return rect{}, fmt.Errorf("no monitor matches %dx%d (available: %s)", w, h, describeMonitors(mons))
+		return win32.Rect{}, fmt.Errorf("no monitor matches %dx%d (available: %s)", w, h, describeMonitors(mons))
 	}
 
 	if n, err := strconv.Atoi(spec); err == nil {
 		if n >= 1 && n <= len(mons) {
 			return mons[n-1].Rect, nil
 		}
-		return rect{}, fmt.Errorf("monitor index %d out of range 1..%d", n, len(mons))
+		return win32.Rect{}, fmt.Errorf("monitor index %d out of range 1..%d", n, len(mons))
 	}
 
-	return rect{}, fmt.Errorf("invalid -monitor value %q (use WxH, an index, or \"primary\")", spec)
+	return win32.Rect{}, fmt.Errorf("invalid -monitor value %q (use WxH, an index, or \"primary\")", spec)
 }
 
 func parseSize(s string) (w, h int, ok bool) {

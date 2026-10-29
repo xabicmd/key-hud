@@ -1,4 +1,4 @@
-package main
+package stage
 
 import (
 	"embed"
@@ -12,6 +12,9 @@ import (
 	"path/filepath"
 
 	webview2 "github.com/jchv/go-webview2"
+
+	"keyhud/internal/capture"
+	"keyhud/internal/config"
 )
 
 // This file is the whole boundary between Go and the page: the embedded
@@ -21,10 +24,10 @@ import (
 //go:embed web
 var webAssets embed.FS
 
-// push marshals one instruction and hands it to the page. Dispatch is
+// Push marshals one instruction and hands it to the page. Dispatch is
 // mandatory: Eval and Navigate are WebView2 COM calls and must run on the UI
 // thread.
-func push(w webview2.WebView, ev Event) {
+func Push(w webview2.WebView, ev capture.Event) {
 	payload, err := json.Marshal(ev)
 	if err != nil {
 		return
@@ -33,10 +36,10 @@ func push(w webview2.WebView, ev Event) {
 	w.Dispatch(func() { w.Eval(script) })
 }
 
-// serveAssets exposes the embedded UI plus the live config on a loopback port.
+// ServeAssets exposes the embedded UI plus the live config on a loopback port.
 // A real origin keeps web fonts and modules behaving exactly as they do in a
 // normal browser.
-func serveAssets(cfg Config) (string, error) {
+func ServeAssets(cfg config.Config) (string, error) {
 	sub, err := fs.Sub(webAssets, "web")
 	if err != nil {
 		return "", err
@@ -78,7 +81,7 @@ func noCache(h http.Handler) http.Handler {
 	})
 }
 
-func webviewDataPath() string {
+func WebviewDataPath() string {
 	base, err := os.UserCacheDir()
 	if err != nil || base == "" {
 		return ""

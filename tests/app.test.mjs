@@ -6,7 +6,7 @@ import {
   laneWaitMs,
   labelKeyframes,
   rightEdge,
-} from "../web/motion.js";
+} from "../internal/stage/web/motion.js";
 
 const VW = 1920;
 const SPEED = 320; // key-hud.json default

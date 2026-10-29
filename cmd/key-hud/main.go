@@ -14,6 +14,11 @@ import (
 	"time"
 
 	webview2 "github.com/jchv/go-webview2"
+
+	"keyhud/internal/capture"
+	"keyhud/internal/config"
+	"keyhud/internal/platform"
+	"keyhud/internal/stage"
 )
 
 func main() {
@@ -25,20 +30,18 @@ func main() {
 	ignoreSynthetic := flag.Bool("ignore-injected", false, "ignore synthetic keystrokes from macros or remote sessions")
 	flag.Parse()
 
-	ignoreInjected = *ignoreSynthetic
-
-	if !acquireSingleInstance() {
+	if !platform.AcquireSingleInstance() {
 		log.Print("key-hud is already running; this second copy is exiting")
 		return
 	}
 
 	cfgPath := *configFile
 	if cfgPath == "" {
-		cfgPath = configPath()
+		cfgPath = config.Path()
 	}
-	cfg := loadConfig(cfgPath)
+	cfg := config.Load(cfgPath)
 
-	target, err := pickMonitor(*monitorSpec)
+	target, err := platform.PickMonitor(*monitorSpec)
 	if err != nil {
 		log.Fatalf("monitor: %v", err)
 	}
@@ -46,7 +49,7 @@ func main() {
 
 	w := webview2.NewWithOptions(webview2.WebViewOptions{
 		Debug:     *debug,
-		DataPath:  webviewDataPath(),
+		DataPath:  stage.WebviewDataPath(),
 		AutoFocus: false,
 		WindowOptions: webview2.WindowOptions{
 			Title:  "key-hud",
@@ -59,14 +62,17 @@ func main() {
 	}
 	defer w.Destroy()
 
-	styleAsOverlay(uintptr(w.Window()), target, *topmost, *noActivate)
-
-	grouperRef = newGrouper(time.Duration(cfg.GroupWindowMs)*time.Millisecond, cfg.Lanes)
+	platform.StyleAsOverlay(uintptr(w.Window()), target, *topmost, *noActivate)
 
 	// The intro comes up before the hooks exist, so the strip is muted from the
-	// first key. splash.go owns the rest.
-	splash := newSplashGate()
-	splashRef = splash
+	// first key. gate.go owns the rest.
+	gate := capture.NewGate()
+	input := capture.New(capture.Options{
+		Gate:           gate,
+		IgnoreInjected: *ignoreSynthetic,
+		GroupWindow:    time.Duration(cfg.GroupWindowMs) * time.Millisecond,
+		Lanes:          cfg.Lanes,
+	})
 
 	quit := make(chan struct{})
 	var startOnce sync.Once
@@ -76,10 +82,10 @@ func main() {
 	// ever fails.
 	startHooksOnce := func() {
 		startOnce.Do(func() {
-			events := startHooks(quit)
+			events := input.Start(quit)
 			go func() {
 				for ev := range events {
-					push(w, ev)
+					stage.Push(w, ev)
 				}
 			}()
 			log.Print("global hooks installed")
@@ -96,7 +102,7 @@ func main() {
 	// The page asks once at boot whether the intro is still up: the Enter press
 	// can land before the document exists, and the push would be lost.
 	if err := w.Bind("hudIntro", func() (bool, error) {
-		return splash.Pending(), nil
+		return gate.Pending(), nil
 	}); err != nil {
 		log.Printf("bind hudIntro: %v", err)
 	}
@@ -115,12 +121,12 @@ func main() {
 	}()
 
 	go func() {
-		splash.waitStart()
+		gate.WaitStart()
 		log.Print("intro dismissed; the strip is live")
-		hideIntro(w)
+		stage.HideIntro(w)
 	}()
 
-	addr, err := serveAssets(cfg)
+	addr, err := stage.ServeAssets(cfg)
 	if err != nil {
 		log.Fatalf("http: %v", err)
 	}

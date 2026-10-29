@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createSplash } from "../web/splash.js";
+import { createSplash } from "../internal/stage/web/splash.js";
 
 // The intro is the first thing the window shows. These tests pin the three
 // lines and the two calls Go uses to drop them; the keyboard side lives in

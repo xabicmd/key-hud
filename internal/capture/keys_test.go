@@ -1,4 +1,4 @@
-package main
+package capture
 
 import "testing"
 
@@ -19,10 +19,10 @@ func TestKeyLabel(t *testing.T) {
 		{0x1B, "esc"},      // Escape
 		{0x20, "space"},    // Space
 		{0x0D, "enter"},    // Return
-		{0x25, "←"},       // Left arrow
-		{0x26, "↑"},       // Up arrow
-		{0x27, "→"},       // Right arrow
-		{0x28, "↓"},       // Down arrow
+		{0x25, "←"},        // Left arrow
+		{0x26, "↑"},        // Up arrow
+		{0x27, "→"},        // Right arrow
+		{0x28, "↓"},        // Down arrow
 		{0x60, "numpad 0"}, // Numpad 0
 		{0xBA, ";"},        // OEM semicolon
 		{0x0F, "vk0f"},     // unmapped code
@@ -63,29 +63,29 @@ func TestCanonModCollapsesSides(t *testing.T) {
 
 func TestBuildComboLabelOrder(t *testing.T) {
 	resetComboState()
-	if got := buildComboLabel("c"); got != "c" {
+	if got := p.buildComboLabel("c"); got != "c" {
 		t.Fatalf("no modifiers: got %q, want %q", got, "c")
 	}
 
 	// Order is fixed as ctrl, shift, alt, win regardless of press order.
-	heldMods[canonMod(vkLWin)] = true
-	heldMods[canonMod(vkRShift)] = true
-	heldMods[canonMod(vkLAlt)] = true
-	heldMods[canonMod(vkRControl)] = true
+	p.heldMods[canonMod(vkLWin)] = true
+	p.heldMods[canonMod(vkRShift)] = true
+	p.heldMods[canonMod(vkLAlt)] = true
+	p.heldMods[canonMod(vkRControl)] = true
 
-	if got, want := buildComboLabel("c"), "ctrl+shift+alt+win+c"; got != want {
+	if got, want := p.buildComboLabel("c"), "ctrl+shift+alt+win+c"; got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }
 
 func TestBuildComboLabelMouse(t *testing.T) {
 	resetComboState()
-	if got, want := buildComboLabel("click"), "click"; got != want {
+	if got, want := p.buildComboLabel("click"), "click"; got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 
-	heldMods[canonMod(vkLControl)] = true
-	if got, want := buildComboLabel("click"), "ctrl+click"; got != want {
+	p.heldMods[canonMod(vkLControl)] = true
+	if got, want := p.buildComboLabel("click"), "ctrl+click"; got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }

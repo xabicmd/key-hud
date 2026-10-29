@@ -1,4 +1,4 @@
-package main
+package config
 
 import (
 	"encoding/json"
@@ -8,7 +8,7 @@ import (
 )
 
 func TestDefaultConfigIsComplete(t *testing.T) {
-	cfg := defaultConfig()
+	cfg := Default()
 
 	if cfg.SpeedPxPerSec <= 0 {
 		t.Fatalf("speedPxPerSec = %v, want > 0", cfg.SpeedPxPerSec)
@@ -22,7 +22,7 @@ func TestDefaultConfigIsComplete(t *testing.T) {
 
 	// Every group the grouper can emit must have a colour, otherwise a label
 	// would fall back to the first frame's hardcoded white.
-	for _, group := range []string{groupLetters, groupSymbols, groupCombo, groupMouse} {
+	for _, group := range []string{GroupLetters, GroupSymbols, GroupCombo, GroupMouse} {
 		style, ok := cfg.Colors[group]
 		if !ok {
 			t.Fatalf("missing colour group %q", group)
@@ -34,10 +34,10 @@ func TestDefaultConfigIsComplete(t *testing.T) {
 }
 
 func TestMergeConfigKeepsDefaultsForUnsetFields(t *testing.T) {
-	base := defaultConfig()
+	base := Default()
 	user := Config{SpeedPxPerSec: 900}
 
-	got := mergeConfig(base, user)
+	got := Merge(base, user)
 
 	if got.SpeedPxPerSec != 900 {
 		t.Fatalf("speedPxPerSec = %v, want 900", got.SpeedPxPerSec)
@@ -49,38 +49,38 @@ func TestMergeConfigKeepsDefaultsForUnsetFields(t *testing.T) {
 	if got.Lanes != base.Lanes {
 		t.Fatalf("lanes = %d, want %d", got.Lanes, base.Lanes)
 	}
-	if got.Colors[groupMouse] != base.Colors[groupMouse] {
-		t.Fatalf("mouse colour = %+v, want %+v", got.Colors[groupMouse], base.Colors[groupMouse])
+	if got.Colors[GroupMouse] != base.Colors[GroupMouse] {
+		t.Fatalf("mouse colour = %+v, want %+v", got.Colors[GroupMouse], base.Colors[GroupMouse])
 	}
 }
 
 func TestMergeConfigOverridesOnlyGivenColourFields(t *testing.T) {
-	base := defaultConfig()
+	base := Default()
 	user := Config{Colors: map[string]ColorStyle{
-		groupLetters: {Glow: "#ff0000"},
+		GroupLetters: {Glow: "#ff0000"},
 	}}
 
-	got := mergeConfig(base, user)
+	got := Merge(base, user)
 
-	if got.Colors[groupLetters].Glow != "#ff0000" {
-		t.Fatalf("glow = %q, want #ff0000", got.Colors[groupLetters].Glow)
+	if got.Colors[GroupLetters].Glow != "#ff0000" {
+		t.Fatalf("glow = %q, want #ff0000", got.Colors[GroupLetters].Glow)
 	}
 	// A partial style must not blank out the fields it left alone.
-	if got.Colors[groupLetters].Text != base.Colors[groupLetters].Text {
-		t.Fatalf("text = %q, want the default %q", got.Colors[groupLetters].Text, base.Colors[groupLetters].Text)
+	if got.Colors[GroupLetters].Text != base.Colors[GroupLetters].Text {
+		t.Fatalf("text = %q, want the default %q", got.Colors[GroupLetters].Text, base.Colors[GroupLetters].Text)
 	}
-	if got.Colors[groupLetters].GlowFar != base.Colors[groupLetters].GlowFar {
-		t.Fatalf("glowFar = %q, want the default %q", got.Colors[groupLetters].GlowFar, base.Colors[groupLetters].GlowFar)
+	if got.Colors[GroupLetters].GlowFar != base.Colors[GroupLetters].GlowFar {
+		t.Fatalf("glowFar = %q, want the default %q", got.Colors[GroupLetters].GlowFar, base.Colors[GroupLetters].GlowFar)
 	}
 }
 
 func TestMergeConfigIgnoresUnknownGroup(t *testing.T) {
-	base := defaultConfig()
+	base := Default()
 	user := Config{Colors: map[string]ColorStyle{
 		"nonsense": {Text: "#123456"},
 	}}
 
-	got := mergeConfig(base, user)
+	got := Merge(base, user)
 
 	if _, ok := got.Colors["nonsense"]; ok {
 		t.Fatal("an unknown colour group was invented")
@@ -93,8 +93,8 @@ func TestMergeConfigIgnoresUnknownGroup(t *testing.T) {
 func TestLoadConfigWritesDefaultsWhenMissing(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "key-hud.json")
 
-	got := loadConfig(path)
-	if got.SpeedPxPerSec != defaultConfig().SpeedPxPerSec {
+	got := Load(path)
+	if got.SpeedPxPerSec != Default().SpeedPxPerSec {
 		t.Fatalf("speedPxPerSec = %v, want the default", got.SpeedPxPerSec)
 	}
 
@@ -120,8 +120,8 @@ func TestLoadConfigFallsBackOnInvalidJSON(t *testing.T) {
 	}
 
 	// A typo in the config must never stop the app from starting.
-	got := loadConfig(path)
-	if got.SpeedPxPerSec != defaultConfig().SpeedPxPerSec {
+	got := Load(path)
+	if got.SpeedPxPerSec != Default().SpeedPxPerSec {
 		t.Fatalf("speedPxPerSec = %v, want the default", got.SpeedPxPerSec)
 	}
 }
@@ -140,16 +140,16 @@ func TestLoadConfigReadsUserValues(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := loadConfig(path)
+	got := Load(path)
 
 	if got.SpeedPxPerSec != 640 || got.GroupWindowMs != 250 || got.Lanes != 2 {
 		t.Fatalf("scalars = %+v", got)
 	}
-	if got.Colors[groupCombo].Glow != "#00ff00" {
-		t.Fatalf("combo glow = %q", got.Colors[groupCombo].Glow)
+	if got.Colors[GroupCombo].Glow != "#00ff00" {
+		t.Fatalf("combo glow = %q", got.Colors[GroupCombo].Glow)
 	}
 	// Groups absent from the file keep their defaults.
-	if got.Colors[groupMouse] != defaultConfig().Colors[groupMouse] {
-		t.Fatalf("mouse colour = %+v", got.Colors[groupMouse])
+	if got.Colors[GroupMouse] != Default().Colors[GroupMouse] {
+		t.Fatalf("mouse colour = %+v", got.Colors[GroupMouse])
 	}
 }

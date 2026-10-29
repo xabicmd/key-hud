@@ -48,7 +48,7 @@ intro can shift the lane rotation or leak a stray label once the strip starts.
 ## Build and run
 
 ```powershell
-go build -ldflags "-H windowsgui -s -w" -o key-hud.exe .
+go build -ldflags "-H windowsgui -s -w" -o key-hud.exe ./cmd/key-hud
 .\key-hud.exe
 ```
 
@@ -57,29 +57,42 @@ see logs on stderr.
 
 ## Project layout
 
-One package, one binary. Go does not use a `src/` tree: every `.go` file in the
-repository root belongs to `package main`, and the build compiles them together.
-The files are split by responsibility, not by layer:
+One binary, several packages. `cmd/key-hud` is the entry point and the only
+place that wires the parts together; everything else lives under `internal/`,
+split by domain rather than by layer:
 
-| File | Responsibility |
-| --- | --- |
-| `main.go` | flags and wiring: config, monitor, window, hook startup |
-| `ui.go` | embedded assets, the loopback HTTP origin and the push into the page |
-| `config.go` | `key-hud.json`: defaults, merge and write-on-first-run |
-| `hook.go` | global Win32 hooks and raw message dispatch |
-| `input.go` | one decoded key or mouse event to one label instruction |
-| `splash.go` | the intro screen gate: mutes input until Enter starts the strip |
-| `keys.go` | key names and the modifier vocabulary |
-| `typing.go` | what the active layout types for a press, dead keys included |
-| `group.go` | word grouping, lane rotation and colour groups |
-| `win32.go` | DLL functions, constants and C struct layouts |
-| `monitor.go` | monitor enumeration and `-monitor` parsing |
-| `window.go` | overlay window styling and the single-instance mutex |
+```
+cmd/key-hud/          flags, wiring, process lifetime
+internal/win32/       DLL bindings, constants and C struct layouts (no decisions)
+internal/config/      key-hud.json: defaults, merge, write-on-first-run
+internal/platform/    monitor enumeration, overlay window styling, single instance
+internal/capture/     global hooks, key translation, grouping: one Event per input
+internal/stage/       embedded web assets, loopback origin, push into the page
+```
+
+The dependencies form a DAG, so a package can only see what it legitimately
+needs:
+
+| Package | Responsibility | Imports |
+| --- | --- | --- |
+| `cmd/key-hud` | flags and wiring: config, monitor, window, gate, hooks | all |
+| `internal/stage` | embedded assets, the loopback HTTP origin and the push into the page | `capture`, `config`, `win32` |
+| `internal/capture` | global Win32 hooks, one decoded event to one label instruction | `config`, `win32` |
+| `internal/platform` | monitor enumeration and `-monitor` parsing, overlay styling, single-instance mutex | `win32` |
+| `internal/config` | `key-hud.json`: defaults, merge and write-on-first-run | — |
+| `internal/win32` | DLL functions, constants and C struct layouts | — |
+
+Inside `internal/capture` the input state is one explicit `capture.Pipeline`
+built by `main` and passed down: the held keys, the repeat runs, the lane
+rotation and the optional intro `Gate` all live in that value. Nothing is
+shared through package globals, so a second pipeline in a test starts from
+zero and cannot see the first one.
 
 Each `foo.go` has a `foo_test.go` next to it. Go tests must live in the package
 they test: they call unexported functions, and the toolchain only compiles
 `_test.go` files together with the package in the same directory. The `tests/`
-directory is not Go tests; it holds the Node tests for `web/motion.js`.
+directory is not Go tests; it holds the Node tests for the page, and they reach
+the modules under `internal/stage/web/` with a relative import.
 
 ## How keys become labels
 
@@ -224,30 +237,37 @@ There is no close button. Press **Ctrl+Alt+Q**, or kill the process. Press
 
 ## Customizing further
 
-Colour and speed live in `key-hud.json`. Anything beyond that lives in `web/`,
-which is embedded into the binary at build time:
+Colour and speed live in `key-hud.json`. Anything beyond that lives in
+`internal/stage/web/`, which is embedded into the binary at build time:
 
-- `web/style.css` — layout, the CRT scanline and vignette layers. Both are purely
-  cosmetic: delete those two divs and nothing breaks.
-- `web/splash.css` — the intro screen layout. Its colours come from `key-hud.json`.
-- `web/splash.js` — the intro screen: the three lines, `window.__hudStart` and the
-  `hudIntro` read that recovers a start that happened before the page loaded.
-- `web/app.js` — entry point: fetches `/api/config` and exposes `window.__hud`.
-- `web/stage.js` — the label elements, the per-lane anchors and the release queue.
-- `web/motion.js` — pure sweep geometry. The Node tests import this file directly.
-- `web/config.js` — fallback config, the merge with `key-hud.json`, colour styles.
+- `internal/stage/web/style.css` — layout, the CRT scanline and vignette layers.
+  Both are purely cosmetic: delete those two divs and nothing breaks.
+- `internal/stage/web/splash.css` — the intro screen layout. Its colours come
+  from `key-hud.json`.
+- `internal/stage/web/splash.js` — the intro screen: the three lines,
+  `window.__hudStart` and the `hudIntro` read that recovers a start that happened
+  before the page loaded.
+- `internal/stage/web/app.js` — entry point: fetches `/api/config` and exposes
+  `window.__hud`.
+- `internal/stage/web/stage.js` — the label elements, the per-lane anchors and the
+  release queue.
+- `internal/stage/web/motion.js` — pure sweep geometry. The Node tests import this
+  file directly.
+- `internal/stage/web/config.js` — fallback config, the merge with `key-hud.json`,
+  colour styles.
 
 The page uses native ES modules: `index.html` loads `app.js` with
 `type="module"` and the other files import each other over the loopback origin.
-There is no bundler and no build step. `web/package.json` only tells Node that
-`web/` is an ES module tree; the browser ignores it.
+There is no bundler and no build step. `internal/stage/web/package.json` only
+tells Node that directory is an ES module tree; the browser ignores it.
 
 Motion only touches `transform` and `opacity`, so it runs on the compositor and
 you can layer on `filter`, `mix-blend-mode` or SVG effects without slowing the
 capture path down.
 
-The label vocabulary lives in `keys.go`; the translation of a key press into the
-character the active layout types lives in `typing.go`.
+The label vocabulary lives in `internal/capture/keys.go`; the translation of a
+key press into the character the active layout types lives in
+`internal/capture/typing.go`.
 
 ## Known limits
 
@@ -307,16 +327,16 @@ character the active layout types (a pending accent still composes, and
 translating never changes the shared keyboard state), the
 collapse of a repeated action key, the grouping window, lane rotation, colour
 grouping and config merging. The Node
-tests import `web/motion.js` directly and pin the motion geometry: constant speed
-for short and queued labels, the original fade-in/fade-out positions, the wait
-that keeps two labels on one lane from overlapping, and the rule that a label
-enters at the screen edge exactly when its lane is clear. One more test boots
-`web/app.js` in Node with a stubbed document, so a broken module graph or a
-broken `window.__hud` wiring fails there instead of only in the window. The
-splash has its own pair: `splash_test.go` pins the gate that mutes input until
-Enter and keeps a held Enter silent, and `tests/splash.test.mjs` pins the three
-lines and the two calls that drop them. The Win32 hooks and the WebView2 window
-are verified manually.
+tests import `internal/stage/web/motion.js` directly and pin the motion geometry:
+constant speed for short and queued labels, the original fade-in/fade-out
+positions, the wait that keeps two labels on one lane from overlapping, and the
+rule that a label enters at the screen edge exactly when its lane is clear. One
+more test boots `internal/stage/web/app.js` in Node with a stubbed document, so a
+broken module graph or a broken `window.__hud` wiring fails there instead of only
+in the window. The splash has its own pair: `gate_test.go` pins the gate that
+mutes input until Enter and keeps a held Enter silent, and
+`tests/splash.test.mjs` pins the three lines and the two calls that drop them.
+The Win32 hooks and the WebView2 window are verified manually.
 
 ## License
 

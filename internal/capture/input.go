@@ -1,23 +1,52 @@
-package main
+package capture
 
 import (
 	"strings"
 	"time"
+
+	"keyhud/internal/win32"
 )
 
 // This file turns a decoded Windows message into one instruction for the UI:
 // what the key types, whether it is a combination, or whether it is a repeated
 // gesture that must stay silent.
 
-var (
-	// ignoreInjected drops synthetic input (macros, remote sessions). Off by
-	// default: a key you did not physically press is still a key press.
-	ignoreInjected bool
+// Options configures one pipeline. The zero value is usable: the gate is
+// absent, synthetic input is shown and grouping falls back to the defaults.
+type Options struct {
+	// Gate, when set, filters input before it can become a label. The intro
+	// screen uses it to stay silent until the strip starts.
+	Gate *Gate
 
-	// All of the state below is touched only by the hook thread, which is
-	// locked to its OS thread, so no synchronization is needed.
-	pressed      = map[uint32]bool{}
-	heldMods     = map[uint32]bool{}
+	// IgnoreInjected drops synthetic input (macros, remote sessions).
+	IgnoreInjected bool
+
+	// GroupWindow is how long a pause keeps two keystrokes in one word.
+	GroupWindow time.Duration
+
+	// Lanes is how many vertical lanes the strip rotates through.
+	Lanes int
+}
+
+// Pipeline owns everything the input side remembers between two events. It is
+// created once by main and used only from the hook thread, which is locked to
+// its OS thread, so it carries no locking.
+//
+// Keeping the state in a value instead of package variables is what makes the
+// dependency explicit: a pipeline needs a gate, a grouping window and a lane
+// count to exist, and nothing else can reach into it by accident.
+type Pipeline struct {
+	gate           *Gate
+	ignoreInjected bool
+	events         chan Event
+	grouper        *grouper
+
+	// readKeyText asks the active layout what a key press types. It is a field
+	// so tests can answer without depending on the installed layout.
+	readKeyText func(vk, scan uint32) keyText
+
+	pressed      map[uint32]bool
+	heldMods     map[uint32]bool
 	rightAlt     bool // AltGr is right alt plus the ctrl Windows adds for it
 	lastAction   uint32
 	lastActionAt time.Time
@@ -28,23 +57,40 @@ var (
 	// gesture and shows one label, exactly like holding an action key.
 	lastWheelRun   string
 	lastWheelRunAt time.Time
-)
+}
 
-func onKey(lParam uintptr, down bool) {
-	kb := (*kbdLLHookStruct)(ptrAt(lParam))
-	if ignoreInjected && kb.Flags&llkhfInjected != 0 {
+// New builds the input pipeline. It does not install any hook: Start does.
+func New(opts Options) *Pipeline {
+	if opts.GroupWindow <= 0 {
+		opts.GroupWindow = 500 * time.Millisecond
+	}
+	p := &Pipeline{
+		gate:           opts.Gate,
+		ignoreInjected: opts.IgnoreInjected,
+		grouper:        newGrouper(opts.GroupWindow, opts.Lanes),
+		pressed:        map[uint32]bool{},
+		heldMods:       map[uint32]bool{},
+	}
+	p.readKeyText = p.layoutKeyText
+	return p
+}
+
+// onKey decodes one raw keyboard hook message and feeds the pipeline.
+func (p *Pipeline) onKey(lParam uintptr, down bool) {
+	kb := (*win32.KbdLLHookStruct)(win32.PtrAt(lParam))
+	if p.ignoreInjected && kb.Flags&win32.LLKHF_INJECTED != 0 {
 		return
 	}
 	// The intro screen swallows input before it becomes an instruction, so
 	// nothing below can advance a lane or a repeat run behind it.
-	if splashRef != nil && !splashRef.passKey(kb.VkCode, down) {
+	if p.gate != nil && !p.gate.PassKey(kb.VkCode, down) {
 		return
 	}
 	scan := kb.ScanCode
 	if scan == 0 {
 		scan = scanCode(kb.VkCode)
 	}
-	handleKey(kb.VkCode, scan, down)
+	p.handleKey(kb.VkCode, scan, down)
 }
 
 // handleKey applies one key transition and returns the instruction to publish,
@@ -59,13 +105,13 @@ func onKey(lParam uintptr, down bool) {
 // down because the next key was pressed a few milliseconds later is just fast
 // typing, not "a+b"; treating it as a modifier is what turned "hola" into
 // "ho" + "l+a".
-func handleKey(vk, scan uint32, down bool) (Event, bool) {
+func (p *Pipeline) handleKey(vk, scan uint32, down bool) (Event, bool) {
 	if !down {
-		delete(pressed, vk)
+		delete(p.pressed, vk)
 		if isModifier(vk) {
-			delete(heldMods, canonMod(vk))
+			delete(p.heldMods, canonMod(vk))
 			if vk == vkRAlt {
-				rightAlt = false
+				p.rightAlt = false
 			}
 		}
 		return Event{}, false
@@ -73,108 +119,104 @@ func handleKey(vk, scan uint32, down bool) (Event, bool) {
 
 	// Auto-repeat: Windows keeps sending keydowns while a key is held. Show the
 	// press once, not sixty times a second.
-	if pressed[vk] {
+	if p.pressed[vk] {
 		return Event{}, false
 	}
-	pressed[vk] = true
+	p.pressed[vk] = true
 
 	if isModifier(vk) {
-		heldMods[canonMod(vk)] = true
+		p.heldMods[canonMod(vk)] = true
 		if vk == vkRAlt {
-			rightAlt = true
+			p.rightAlt = true
 		}
 		return Event{}, false
 	}
 
-	if typingModifiers() {
-		switch typed := readKeyText(vk, scan); {
+	if p.typingModifiers() {
+		switch typed := p.readKeyText(vk, scan); {
 		case typed.dead:
 			// The accent waits for the next key. Showing a label now would
 			// claim a character that is not on screen yet.
 			return Event{}, false
 		case typed.text != "":
-			clearActionRun()
+			p.clearActionRun()
 			if typed.text == spaceRune {
 				// A bare space ends the word and leaves the blank behind it,
 				// but it never takes a lane: an invisible label would make the
 				// visible words look like they skip a line.
-				return emit(kindBreak, spaceRune), true
+				return p.emit(kindBreak, spaceRune), true
 			}
-			return emit(kindKey, typed.text), true
+			return p.emit(kindKey, typed.text), true
 		}
 	}
 
-	if len(heldMods) > 0 {
-		clearActionRun()
-		return emit(kindCombo, buildCombo(vk)), true
+	if len(p.heldMods) > 0 {
+		p.clearActionRun()
+		return p.emit(kindCombo, p.buildCombo(vk)), true
 	}
 
 	// Backspace, tab, an arrow, page up/down, home/end: pressed again and
 	// again, it is one gesture and it shows once.
-	if repeatsAction(vk) {
+	if p.repeatsAction(vk) {
 		return Event{}, false
 	}
 	// An action key ends the wheel run: a scroll after backspace is not the
 	// same gesture as the scroll before it.
-	lastWheelRun, lastWheelRunAt = "", time.Time{}
-	return emit(kindAction, keyLabel(vk)), true
+	p.lastWheelRun, p.lastWheelRunAt = "", time.Time{}
+	return p.emit(kindAction, keyLabel(vk)), true
 }
 
 // repeatsAction reports whether this action key continues the run of the same
 // key that is already on screen. Holding a key repeats it by itself, and
 // deleting ten characters is ten presses of one key: showing ten BACKSPACE
 // labels describes the implementation, not what the user did.
-func repeatsAction(vk uint32) bool {
+func (p *Pipeline) repeatsAction(vk uint32) bool {
 	now := time.Now()
-	same := vk == lastAction && now.Sub(lastActionAt) <= grouperRef.window
-	lastAction, lastActionAt = vk, now
+	same := vk == p.lastAction && now.Sub(p.lastActionAt) <= p.grouper.window
+	p.lastAction, p.lastActionAt = vk, now
 	return same
 }
 
 // clearActionRun ends the run, so the same action key after a typed character
 // or a combination shows again. It also ends the wheel run: a scroll is only
 // one gesture while nothing else happens in between.
-func clearActionRun() {
-	lastAction, lastActionAt = 0, time.Time{}
-	lastWheelRun, lastWheelRunAt = "", time.Time{}
+func (p *Pipeline) clearActionRun() {
+	p.lastAction, p.lastActionAt = 0, time.Time{}
+	p.lastWheelRun, p.lastWheelRunAt = "", time.Time{}
 }
 
 // onButton publishes one mouse button or wheel movement. The vertical wheel
 // repeats like an action key: scrolling up several notches is one gesture and
 // shows one label, because a fast wheel would otherwise push everything else
 // off the strip. The sideways wheel and the buttons keep their own handling.
-func onButton(name string) (Event, bool) {
+func (p *Pipeline) onButton(name string) (Event, bool) {
 	// The intro is keyboard-only: a click must not paint a label behind it.
-	if splashRef != nil && !splashRef.passMouse() {
+	if p.gate != nil && !p.gate.PassMouse() {
 		return Event{}, false
 	}
 
 	now := time.Now()
 	if name == "wheel up" || name == "wheel down" {
-		same := name == lastWheelRun && now.Sub(lastWheelRunAt) <= grouperRef.window
-		lastWheelRun, lastWheelRunAt = name, now
+		same := name == p.lastWheelRun && now.Sub(p.lastWheelRunAt) <= p.grouper.window
+		p.lastWheelRun, p.lastWheelRunAt = name, now
 		if same {
 			return Event{}, false
 		}
 		// The scroll ends a run of action keys: backspace after it shows
 		// again.
-		lastAction, lastActionAt = 0, time.Time{}
-		return emit(groupMouse, buildComboLabel(name)), true
+		p.lastAction, p.lastActionAt = 0, time.Time{}
+		return p.emit(kindMouse, p.buildComboLabel(name)), true
 	}
 	// A fast sideways wheel can fire dozens of events per second and would
 	// push everything else off the strip.
 	if strings.HasPrefix(name, "wheel") {
-		if now.Sub(lastWheel) < 70*time.Millisecond {
+		if now.Sub(p.lastWheel) < 70*time.Millisecond {
 			return Event{}, false
 		}
-		lastWheel = now
+		p.lastWheel = now
 	}
-	clearActionRun()
-	return emit(groupMouse, buildComboLabel(name)), true
-}
-
-func buildCombo(vk uint32) string {
-	return buildComboLabel(keyLabel(vk))
+	p.clearActionRun()
+	return p.emit(kindMouse, p.buildComboLabel(name)), true
 }
 
 // typingModifiers reports whether the modifiers held only shift which
@@ -182,12 +224,12 @@ func buildCombo(vk uint32) string {
 // (the system adds the ctrl that the layouts expect for it). Ctrl, left alt,
 // win or any other combination is a command, and a command never types a
 // character.
-func typingModifiers() bool {
-	for m := range heldMods {
+func (p *Pipeline) typingModifiers() bool {
+	for m := range p.heldMods {
 		switch m {
 		case vkShift:
 		case vkControl, vkAlt:
-			if !rightAlt {
+			if !p.rightAlt {
 				return false
 			}
 		default:
@@ -197,12 +239,17 @@ func typingModifiers() bool {
 	return true
 }
 
+// buildCombo prefixes the active modifiers to the name of a virtual key.
+func (p *Pipeline) buildCombo(vk uint32) string {
+	return p.buildComboLabel(keyLabel(vk))
+}
+
 // buildComboLabel prefixes the active modifiers to the given key name:
 // "ctrl+shift+p". Other keys held at the same time are ignored on purpose.
-func buildComboLabel(key string) string {
+func (p *Pipeline) buildComboLabel(key string) string {
 	parts := make([]string, 0, 5)
 	for _, m := range modOrder {
-		if heldMods[m.vk] {
+		if p.heldMods[m.vk] {
 			parts = append(parts, m.name)
 		}
 	}
@@ -213,10 +260,10 @@ func buildComboLabel(key string) string {
 // emit asks the grouper what to do with this input and hands the resulting
 // instruction to the UI. It never blocks: it must not stall the hook callback.
 // It returns the instruction so callers and tests can see it.
-func emit(kind, label string) Event {
-	ev := grouperRef.feed(time.Now(), kind, label)
+func (p *Pipeline) emit(kind, label string) Event {
+	ev := p.grouper.feed(time.Now(), kind, label)
 	select {
-	case hookEvents <- ev:
+	case p.events <- ev:
 	default:
 	}
 	return ev

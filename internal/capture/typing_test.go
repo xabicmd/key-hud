@@ -1,4 +1,4 @@
-package main
+package capture
 
 import (
 	"runtime"
@@ -6,6 +6,8 @@ import (
 	"testing"
 	"unicode"
 	"unsafe"
+
+	"keyhud/internal/win32"
 )
 
 // The machine's real layout decides the characters, and Windows composes dead
@@ -16,7 +18,7 @@ import (
 func deadKeyOf(t *testing.T) uint32 {
 	t.Helper()
 	for vk := uint32(0xBA); vk <= 0xDE; vk++ {
-		if layoutKeyText(vk, scanCode(vk)).dead {
+		if p.layoutKeyText(vk, scanCode(vk)).dead {
 			return vk
 		}
 	}
@@ -29,7 +31,7 @@ func deadKeyOf(t *testing.T) uint32 {
 func rawTranslate(vk, flags uint32) int32 {
 	var state [256]byte
 	var buf [8]uint16
-	n, _, _ := procToUnicodeEx.Call(
+	n, _, _ := win32.ToUnicodeEx.Call(
 		uintptr(vk),
 		uintptr(scanCode(vk)),
 		uintptr(unsafe.Pointer(&state[0])),
@@ -71,7 +73,7 @@ func TestLayoutKeyTextLeavesTheKeyboardStateUntouched(t *testing.T) {
 
 	deadKeyOf(t) // translating the accent is what used to arm the corruption
 
-	if next := layoutKeyText(0x41, scanCode(0x41)); !strings.EqualFold(next.text, "a") {
+	if next := p.layoutKeyText(0x41, scanCode(0x41)); !strings.EqualFold(next.text, "a") {
 		t.Fatalf("letter after translating a dead key = %+v, want a plain a", next)
 	}
 }
@@ -88,7 +90,7 @@ func TestLayoutKeyTextComposesFromAPendingDeadKey(t *testing.T) {
 	deadVK := deadKeyOf(t)
 	pendingDeadKey(t, deadVK)
 
-	composed := layoutKeyText(0x41, scanCode(0x41))
+	composed := p.layoutKeyText(0x41, scanCode(0x41))
 	if composed.dead || composed.text == "" || strings.EqualFold(composed.text, "a") {
 		t.Fatalf("dead key 0x%02X then a = %+v, want one composed letter", deadVK, composed)
 	}
@@ -98,7 +100,7 @@ func TestLayoutKeyTextComposesFromAPendingDeadKey(t *testing.T) {
 
 	// Reading it for the strip must not consume it: the window in front still
 	// has to compose the very same accent.
-	if again := layoutKeyText(0x41, scanCode(0x41)); !strings.EqualFold(again.text, composed.text) {
+	if again := p.layoutKeyText(0x41, scanCode(0x41)); !strings.EqualFold(again.text, composed.text) {
 		t.Fatalf("second read = %+v, want the same composed letter", again)
 	}
 }

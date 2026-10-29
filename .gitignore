@@ -30,6 +30,7 @@ key-hud.json
 # AI tooling local state (generated per machine, not shared)
 .atl/
 .engram/
+odd/
 
 # Local verification scratch
 e*.txt

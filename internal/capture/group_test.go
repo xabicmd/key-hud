@@ -1,8 +1,10 @@
-package main
+package capture
 
 import (
 	"testing"
 	"time"
+
+	"keyhud/internal/config"
 )
 
 func TestGrouperFastTypingFormsOneLabel(t *testing.T) {
@@ -10,7 +12,7 @@ func TestGrouperFastTypingFormsOneLabel(t *testing.T) {
 	t0 := time.Unix(0, 0)
 
 	first := g.feed(t0, "key", "h")
-	if first.Kind != "new" || first.Lane != 0 || first.Group != groupLetters {
+	if first.Kind != "new" || first.Lane != 0 || first.Group != config.GroupLetters {
 		t.Fatalf("first input = %+v", first)
 	}
 
@@ -45,13 +47,13 @@ func TestGrouperComboIsAtomic(t *testing.T) {
 	t0 := time.Unix(0, 0)
 
 	combo := g.feed(t0, kindCombo, "ctrl+c")
-	if combo.Kind != "new" || combo.Group != groupCombo || combo.Lane != 0 {
+	if combo.Kind != "new" || combo.Group != config.GroupCombo || combo.Lane != 0 {
 		t.Fatalf("combo = %+v", combo)
 	}
 
 	// A plain key right after a combo must not be swallowed by it.
 	ev := g.feed(t0.Add(100*time.Millisecond), "key", "d")
-	if ev.Kind != "new" || ev.Lane != 1 || ev.Group != groupLetters {
+	if ev.Kind != "new" || ev.Lane != 1 || ev.Group != config.GroupLetters {
 		t.Fatalf("key after combo = %+v, want a new label on lane 1", ev)
 	}
 }
@@ -61,7 +63,7 @@ func TestGrouperMouseIsAtomic(t *testing.T) {
 	t0 := time.Unix(0, 0)
 
 	click := g.feed(t0, "mouse", "click")
-	if click.Kind != "new" || click.Group != groupMouse || click.Lane != 0 {
+	if click.Kind != "new" || click.Group != config.GroupMouse || click.Lane != 0 {
 		t.Fatalf("click = %+v", click)
 	}
 
@@ -80,7 +82,7 @@ func TestGrouperActionKeyIsAtomic(t *testing.T) {
 	// Backspace arrives inside the grouping window but must still end the word
 	// and get a lane of its own.
 	back := g.feed(t0.Add(100*time.Millisecond), kindAction, "backspace")
-	if back.Kind != "new" || back.Lane != 1 || back.Group != groupSymbols {
+	if back.Kind != "new" || back.Lane != 1 || back.Group != config.GroupSymbols {
 		t.Fatalf("backspace = %+v, want its own label on lane 1", back)
 	}
 
@@ -184,23 +186,23 @@ func TestClassify(t *testing.T) {
 	cases := []struct {
 		kind, label, want string
 	}{
-		{"key", "a", groupLetters},
-		{"key", "z", groupLetters},
-		{"key", "1", groupSymbols},
-		{"key", ";", groupSymbols},
-		{"key", "space", groupSymbols},
-		{"key", "enter", groupSymbols},
-		{"key", "f24", groupSymbols},
-		{"action", "backspace", groupSymbols},
-		{"action", "tab", groupSymbols},
-		{"combo", "ctrl+c", groupCombo},
-		{"combo", "ctrl+shift+alt+win+p", groupCombo},
+		{"key", "a", config.GroupLetters},
+		{"key", "z", config.GroupLetters},
+		{"key", "1", config.GroupSymbols},
+		{"key", ";", config.GroupSymbols},
+		{"key", "space", config.GroupSymbols},
+		{"key", "enter", config.GroupSymbols},
+		{"key", "f24", config.GroupSymbols},
+		{"action", "backspace", config.GroupSymbols},
+		{"action", "tab", config.GroupSymbols},
+		{"combo", "ctrl+c", config.GroupCombo},
+		{"combo", "ctrl+shift+alt+win+p", config.GroupCombo},
 		// A typed "+" is text, not a combination.
-		{"key", "+", groupSymbols},
-		{"mouse", "click", groupMouse},
-		{"mouse", "wheel up", groupMouse},
+		{"key", "+", config.GroupSymbols},
+		{"mouse", "click", config.GroupMouse},
+		{"mouse", "wheel up", config.GroupMouse},
 		// A modified mouse event stays a mouse event.
-		{"mouse", "ctrl+click", groupMouse},
+		{"mouse", "ctrl+click", config.GroupMouse},
 	}
 
 	for _, c := range cases {
@@ -212,8 +214,8 @@ func TestClassify(t *testing.T) {
 
 func TestClassifyHandlesMultibyte(t *testing.T) {
 	// A single non-ASCII letter must not be mistaken for a multi-character key.
-	if got := classify("key", "ñ"); got != groupLetters {
-		t.Fatalf("classify(ñ) = %q, want %q", got, groupLetters)
+	if got := classify("key", "ñ"); got != config.GroupLetters {
+		t.Fatalf("classify(ñ) = %q, want %q", got, config.GroupLetters)
 	}
 }
 

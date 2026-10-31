@@ -48,12 +48,15 @@ intro can shift the lane rotation or leak a stray label once the strip starts.
 ## Build and run
 
 ```powershell
-go build -ldflags "-H windowsgui -s -w" -o key-hud.exe ./cmd/key-hud
+.\build.ps1                    # or .\build.bat; accepts -Output <name>.exe
 .\key-hud.exe
 ```
 
-`-H windowsgui` suppresses the console window. Omit it during development to
-see logs on stderr.
+`build.ps1` forces a full rebuild (`-a`) from a temporary clean copy of the
+sources and supports `-Output <path>.exe` to place the binary elsewhere.
+`-H windowsgui` suppresses the console window; omit `-H windowsgui` during
+development to see logs on stderr.
+
 
 ## Project layout
 
@@ -271,6 +274,20 @@ key press into the character the active layout types lives in
 
 ## Known limits
 
+- **The exe cannot run from a tree with a Low mandatory integrity label.** A
+  sandbox tool can mark a tree (for example `C:\Users\neoho\www`, set as
+  `Etiqueta obligatoria\Nivel obligatorio bajo`, `(OI)(CI)`); every copied or
+  freshly built exe inside inherits the label, launches as a low-integrity
+  process, and WebView2 then fails with `0x800700AA` in
+  `CreateCoreWebView2Controller`. The jchv/go-webview2 binding checks
+  `int64(res) < 0`, misses the positive `0x8007xxxx` HRESULT, and panics with
+  a nil pointer dereference instead of reporting the error. The same binary
+  outside the tree runs fine; stripping the DACL never fixes it, only the
+  integrity label does. Fix for one project folder (leave the rest of the
+  sandbox alone):
+  ```powershell
+  icacls C:\Users\neoho\www\key-hud /setintegritylevel (OI)(CI)M /T
+  ```
 - Keystrokes typed into elevated (Administrator) windows are invisible to a
   non-elevated hook, thanks to UIPI. Run the app elevated if you need them.
 - `Ctrl+Alt+Del` and the secure desktop cannot be captured by any user-mode
